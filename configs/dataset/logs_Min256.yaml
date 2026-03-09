@@ -1,0 +1,3 @@
+version_name: "logs_Min256"
+min_side_length: 256
+transforms:
