@@ -1,0 +1,20 @@
+resolution: ${augmentation.resolution}
+total_epochs: ${total_epochs}
+
+model:
+  _target_: segmentation_models_pytorch.Unet
+  encoder_name: mit_b0
+  encoder_weights: imagenet
+  in_channels: 3
+  classes: 1
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1e-4
+  weight_decay: 0.01
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.LinearLR
+  start_factor: 1.0
+  end_factor: 0.1
+  # total_iters is set in the module as 0.9 of all epochs

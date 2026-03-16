@@ -1,5 +1,6 @@
 data/
 .env
 .venv/
-**/logs.egg-info
 **/__pycache__/
+**/*.egg-info
+experiments/

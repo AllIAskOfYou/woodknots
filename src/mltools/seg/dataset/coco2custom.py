@@ -69,7 +69,7 @@ def coco2custom(dataset_name: str, class_name: str, res: int):
 
     with ThreadPoolExecutor() as executor:
         list(
-            tqdm(
+            tqdm.tqdm(
                 executor.map(convert_case, tasks),
                 total=len(tasks),
                 desc=f"Processing dataset...",

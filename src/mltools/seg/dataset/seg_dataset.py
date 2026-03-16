@@ -12,29 +12,19 @@ def load_case(data_path, case_id):
     # Load the image and label using PIL and convert to numpy arrays
     image = np.array(Image.open(image_path))
     # add channel dimension to image
-    label = np.expand_dims(np.array(Image.open(label_path)), axis=-1).astype(np.float32)
+    label = (
+        np.expand_dims(np.array(Image.open(label_path)), axis=-1).astype(np.float32)
+        / 255.0
+    )
     return image, label
 
 
-def load_dataset(data_path, fold=0, groups_file=None):
-    # Get the list of case IDs for the specified fold
-    fold_path = os.path.join(data_path, "splits.json")
-    if not os.path.exists(fold_path):
-        raise FileNotFoundError(f"Data splits file not found at {fold_path}.")
-    print(f"Loading data splits from {fold_path} for fold {fold}")
-    with open(fold_path, "r") as f:
-        splits = json.load(f)
-    train_cases = splits[fold]["train"]
-    val_cases = splits[fold]["val"]
-    return train_cases, val_cases
-
-
 class SegDataset(Dataset):
-    def __init__(self, data_path, cases, transform=None, cache_size=0):
+    def __init__(self, data_path, cases, transform=None, cache_amount=1.0):
         self.data_path = data_path
         self.cases = cases
         self.transform = transform
-        cache_size = cache_size if cache_size > 0 else len(cases)
+        cache_size = int(len(cases) * cache_amount)
         self.cache_size = cache_size
         self.data = [
             load_case(self.data_path, case_id)

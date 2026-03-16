@@ -1,15 +1,20 @@
 [project]
-name = "logs"
+name = "mltools"
 version = "0.1.0"
-description = "Add your description here"
+description = "Tools for ml tasks."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.11, <3.14"
 dependencies = [
-    "albumentations>=2.0.8",
-    "lightning>=2.6.1",
-    "pycocotools>=2.0.11",
-    "python-dotenv>=1.2.2",
-    "segmentation-models-pytorch>=0.5.0",
+    "albumentations",
+    "hydra-core",
+    "ipykernel>=7.2.0",
+    "lightning",
+    "monai",
+    "pycocotools",
+    "python-dotenv",
+    "segmentation-models-pytorch",
+    "setuptools<82.0.0",
+    "tensorboard>=2.20.0",
 ]
 
 [build-system]

@@ -1,0 +1,30 @@
+defaults:
+  - base
+  - _self_
+
+distortion:
+  elastic:
+    alpha: 100.0
+    sigma: 10.0
+  grid:
+    num_steps: 5
+    distort_limit: 0.3
+  p: 0.85
+  e2g_ratio: 1.0
+
+random_crop:
+  scale: [1.0, 1.0]
+  rotation: [-180, 180]
+
+horizontal_flip:
+  p: 0.5
+
+vertical_flip:
+  p: 0.5
+
+color_jitter:
+  brightness: 0.4
+  contrast: 0.4
+  saturation: 0.2
+  hue: 0.1
+  p: 0.9
