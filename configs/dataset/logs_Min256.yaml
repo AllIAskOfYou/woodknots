@@ -1,3 +1,4 @@
 name: "logs_Min256"
 class_name: "primary_log"
 resolution: 256
+mask_image: null

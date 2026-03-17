@@ -1,3 +1,4 @@
 name: "knots_Min256"
 class_name: "wood_knot"
 resolution: 256
+mask_image: null

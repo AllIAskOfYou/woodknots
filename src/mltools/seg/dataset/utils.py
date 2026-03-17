@@ -4,7 +4,7 @@ from omegaconf import OmegaConf
 import json
 
 from mltools import PROCESSED_DIR
-from .coco2custom import coco2custom
+from .coco2custom import COCO2CustomConvertor
 from mltools import METADATA_DIR
 from mltools.seg.schema import DatasetConfig
 from mltools.utils.data import split_k_fold_by_groups
@@ -31,11 +31,8 @@ def get_dataset_by_config(cfg: DatasetConfig):
         print(f"🚀 Generating dataset: {dataset_name}...")
         root_path.mkdir(parents=True, exist_ok=True)
 
-        coco2custom(
-            dataset_name=dataset_name,  # Pass name or path depending on your function
-            class_name=cfg.class_name,
-            res=cfg.resolution,
-        )
+        convertor = COCO2CustomConvertor(cfg)
+        convertor.convert()
 
         # 4. Save the "Recipe" (The 'dataset' branch only)
         # This is where we save the config into the dataset folder

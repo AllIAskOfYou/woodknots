@@ -21,6 +21,9 @@ class SegModule(L.LightningModule):
     def __init__(self, module_cfg: ModuleConfig):
         super().__init__()
         self.model = instantiate(module_cfg.model)
+        # freeze encoder layers
+        for param in self.model.encoder.parameters():
+            param.requires_grad = False
         self.cfg = module_cfg
         self.loss = SegLoss()
         self.save_hyperparameters(module_cfg)
@@ -62,7 +65,7 @@ class SegModule(L.LightningModule):
         self.log("val_dice", compute_score(outputs, masks), prog_bar=True)
 
     def configure_optimizers(self):
-        optimizer = instantiate(self.cfg.optimizer, params=self.parameters())
+        optimizer = instantiate(self.cfg.optimizer, params=filter(lambda p: p.requires_grad, self.parameters()),)
         scheduler = instantiate(
             self.cfg.scheduler,
             optimizer=optimizer,

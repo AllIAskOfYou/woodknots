@@ -9,7 +9,10 @@ defaults:
   - module: default
   - _self_
 
-  
+
 fold: 0
 batch_size: 20
-total_epochs: 300  
+total_epochs: 300
+class_groups:
+  - value: 1.0
+    classes: [0.2, 0.6, 1.0]

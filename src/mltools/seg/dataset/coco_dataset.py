@@ -13,12 +13,10 @@ class COCODataset(Dataset):
         img_dir: str,
         ann_file: str,
         transforms: Optional[BasicTransform] = None,
-        use_confidence: bool = False,
     ):
         self.coco = COCO(ann_file)
         self.img_dir = img_dir
         self.ids = list(self.coco.imgs.keys())
-        self.use_confidence = use_confidence
 
         # Consistent class mapping
         classes = self.coco.loadCats(self.coco.getCatIds())
@@ -56,9 +54,7 @@ class COCODataset(Dataset):
 
                 # Use attributes for confidence weighting (Soft Masks)
                 confidence = (
-                    ann.get("attributes", {}).get("confidence", 1.0)
-                    if self.use_confidence
-                    else 1.0
+                    ann.get("attributes", {}).get("confidance", 1.0)
                 )
                 m = m.astype(np.float32) * float(confidence)
                 full_mask[:, :, channel] = np.maximum(full_mask[:, :, channel], m)

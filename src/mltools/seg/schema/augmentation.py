@@ -50,3 +50,4 @@ class AugmentationConfig:
     horizontal_flip: FlipConfig
     vertical_flip: FlipConfig
     color_jitter: ColorJitterConfig
+    mask_vignette_amount: float
