@@ -1,8 +1,8 @@
 import albumentations as A
 import cv2
+from mltools.seg.schema import PreprocessingConfig
 from mltools.seg.schema import AugmentationConfig
 import numpy as np
-from omegaconf import DictConfig
 from scipy.stats import norm
 
 INFERENCE_TRANSFORM = A.Compose(
@@ -20,7 +20,11 @@ def rotate_if_portrait(data, **kwargs):
         data = np.rot90(data)
     return data
 
+
 def get_vignette(labels, amount=0.5):
+    amount = (
+        1 - amount
+    )  # TODO: change the function to use amount directly instead of 1-amount
     labels = labels.astype(np.float32)
     mask = (labels > 0).astype(np.uint8) * 255
     if amount <= 0:
@@ -31,41 +35,42 @@ def get_vignette(labels, amount=0.5):
         return np.zeros_like(mask, dtype=np.float32)
 
     # mask should be uint8 (0 and 255)
-    dist, labels_indices = cv2.distanceTransformWithLabels(~mask, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL)
+    dist, labels_indices = cv2.distanceTransformWithLabels(
+        ~mask, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL
+    )
     # return labels_indices, dist
 
     # The kernel size should be proportional to image resolution
     res = min(labels.shape[0:2])
-    blur_size = int(res * 0.05) | 1 # Must be odd
+    blur_size = int(res * 0.05) | 1  # Must be odd
     vignette_map = cv2.GaussianBlur(dist, (blur_size, blur_size), 0)
 
     # apply bell curve for falloff control
     scale = res * 0.5
-    vignette_map = norm.cdf(vignette_map, loc=0, scale=(scale*(1-amount)))
-    vignette_map = (1 - vignette_map)
+    vignette_map = norm.cdf(vignette_map, loc=0, scale=(scale * (1 - amount)))
+    vignette_map = 1 - vignette_map
     cv2.normalize(vignette_map, vignette_map, 0, 1.0, cv2.NORM_MINMAX)
     # use labels_indices to index labels
     vignette_map = vignette_map[:, :, np.newaxis]
-    print(labels.shape)
     flat_labels = labels[labels > 0].flatten()
     # add dim to the end
     labels_map = flat_labels[labels_indices - 1][..., np.newaxis]
-    print(vignette_map.shape, labels_map.shape)
     vignette_map = vignette_map * labels_map
-    return vignette_map
+    return vignette_map.astype(np.float32)
+
 
 def apply_vignette(image, labels, amount=0.5):
     """
     Applies a contour-aware vignette.
     amount: 0.0 (no effect) to 1.0 (full mask falloff)
     """
-    vignette_map = get_vignette(labels, amount)
+    vignette_map = get_vignette(labels, 1 - amount)
 
     # apply to image
     # ensure image is float for multiplication
     result = image * vignette_map
-    
-    return result
+
+    return result.astype(image.dtype)
 
 
 force_landscape = A.Lambda(
@@ -73,10 +78,43 @@ force_landscape = A.Lambda(
 )
 
 
+class ImageMaskTransform(A.DualTransform):
+    def __init__(self, amount, channel_index, p=1.0):
+        super().__init__(True, p)
+        self.amount = amount
+        self.channel_index = channel_index
+
+    def apply(self, img, **kwargs):
+        mask = kwargs.get("image_mask", None)
+        if mask is None:
+            raise ValueError("Mask is required for ImageMaskTransform")
+        return apply_vignette(
+            img, mask[..., self.channel_index : self.channel_index + 1], self.amount
+        )
+
+    def apply_to_mask(self, mask, **kwargs):
+        return mask
+
+    def get_params_dependent_on_data(self, params, data):
+        # this is the key part
+        return {"image_mask": data["mask"]}
+
+
+def get_preprocessing_transform(cfg: PreprocessingConfig):
+    transforms = []
+    if cfg.mask_image is not None and cfg.mask_image.amount > 0:
+        transforms.append(
+            ImageMaskTransform(
+                amount=cfg.mask_image.amount,
+                channel_index=cfg.mask_image.channel_index,
+            )
+        )
+    return A.Compose(transforms)
+
+
 def get_train_transform(cfg: AugmentationConfig):
     return A.Compose(
         [
-            force_landscape,
             A.ColorJitter(**cfg.color_jitter),
             A.OneOf(
                 [
@@ -99,7 +137,11 @@ def get_train_transform(cfg: AugmentationConfig):
             A.VerticalFlip(**cfg.vertical_flip),
             A.Normalize(),
             A.Lambda(
-                name="mask_vignette", image=lambda x, **kwargs: x, mask=lambda mask, **kwargs: get_vignette(mask, amount=cfg.mask_vignette_amount)
+                name="mask_vignette",
+                image=lambda x, **kwargs: x,
+                mask=lambda mask, **kwargs: get_vignette(
+                    mask, amount=cfg.mask_vignette_amount
+                ),
             ),
             A.ToTensorV2(transpose_mask=True),
         ]

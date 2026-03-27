@@ -22,11 +22,20 @@ class SegModule(L.LightningModule):
         super().__init__()
         self.model = instantiate(module_cfg.model)
         # freeze encoder layers
-        for param in self.model.encoder.parameters():
-            param.requires_grad = False
+        # for param in self.model.encoder.parameters():
+        #     param.requires_grad = False
         self.cfg = module_cfg
         self.loss = SegLoss()
         self.save_hyperparameters(module_cfg)
+
+    def forward(self, x):
+        res = self.cfg.resolution
+        with torch.no_grad():
+            outputs = sliding_window_inference(
+                x, roi_size=(res, res), sw_batch_size=4, predictor=self.model
+            )
+        preds = torch.sigmoid(outputs)
+        return preds
 
     def training_step(self, batch: torch.Tensor, batch_idx: int):
         images, masks = batch
@@ -65,7 +74,10 @@ class SegModule(L.LightningModule):
         self.log("val_dice", compute_score(outputs, masks), prog_bar=True)
 
     def configure_optimizers(self):
-        optimizer = instantiate(self.cfg.optimizer, params=filter(lambda p: p.requires_grad, self.parameters()),)
+        optimizer = instantiate(
+            self.cfg.optimizer,
+            params=filter(lambda p: p.requires_grad, self.parameters()),
+        )
         scheduler = instantiate(
             self.cfg.scheduler,
             optimizer=optimizer,

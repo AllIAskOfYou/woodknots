@@ -28,5 +28,3 @@ color_jitter:
   saturation: 0.2
   hue: 0.1
   p: 0.9
-
-mask_vignette_amount: 0.95

@@ -41,6 +41,12 @@ def get_dataset_by_config(cfg: DatasetConfig):
     return root_path
 
 
+def get_metadata(data_path):
+    with open(Path(data_path) / "metadata.json", "r") as f:
+        metadata = json.load(f)
+    return metadata
+
+
 def _filter_groups(groups: list[list[str]], valid_ids: set[str]):
     filtered_groups = list()
     for group in groups:

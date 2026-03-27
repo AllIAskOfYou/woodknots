@@ -16,6 +16,7 @@ dependencies = [
     "segmentation-models-pytorch",
     "setuptools<82.0.0",
     "tensorboard>=2.20.0",
+    "tifffile>=2026.3.3",
 ]
 
 [build-system]
