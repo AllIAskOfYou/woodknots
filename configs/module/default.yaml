@@ -1,5 +1,6 @@
 resolution: ${augmentation.resolution}
 total_epochs: ${total_epochs}
+freeze_encoder: false
 
 model:
   _target_: segmentation_models_pytorch.MAnet

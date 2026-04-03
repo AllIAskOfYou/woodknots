@@ -17,6 +17,7 @@ def load_case(data_path, case_id):
     image = np.array(Image.open(image_path))
     # add channel dimension to image
     label = tiff.imread(label_path).astype(np.float32) / 255.0
+    label = np.transpose(label, (1, 2, 0))  # (C, H, W) to (H, W, C)
     return image, label
 
 

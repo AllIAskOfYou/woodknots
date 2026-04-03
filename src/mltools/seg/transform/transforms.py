@@ -21,18 +21,26 @@ def rotate_if_portrait(data, **kwargs):
     return data
 
 
+class ForceLandscape(A.DualTransform):
+    def __init__(self, p=1.0):
+        super().__init__(True, p)
+
+    def apply(self, img, **kwargs):
+        return rotate_if_portrait(img)
+
+    def apply_to_mask(self, mask, **kwargs):
+        return rotate_if_portrait(mask)
+
+
 def get_vignette(labels, amount=0.5):
-    amount = (
-        1 - amount
-    )  # TODO: change the function to use amount directly instead of 1-amount
     labels = labels.astype(np.float32)
     mask = (labels > 0).astype(np.uint8) * 255
-    if amount <= 0:
-        return np.ones_like(mask, dtype=np.float32)
-    if amount >= 1:
-        return (mask > 0).astype(np.float32)
     if not np.any(mask):
         return np.zeros_like(mask, dtype=np.float32)
+    if amount <= 0:
+        return labels
+    if amount >= 1:
+        return np.ones_like(mask, dtype=np.float32)
 
     # mask should be uint8 (0 and 255)
     dist, labels_indices = cv2.distanceTransformWithLabels(
@@ -42,12 +50,12 @@ def get_vignette(labels, amount=0.5):
 
     # The kernel size should be proportional to image resolution
     res = min(labels.shape[0:2])
-    blur_size = int(res * 0.05) | 1  # Must be odd
+    blur_size = int(res * 0.1) | 1  # Must be odd
     vignette_map = cv2.GaussianBlur(dist, (blur_size, blur_size), 0)
 
     # apply bell curve for falloff control
     scale = res * 0.5
-    vignette_map = norm.cdf(vignette_map, loc=0, scale=(scale * (1 - amount)))
+    vignette_map = norm.cdf(vignette_map, loc=0, scale=(scale * amount))
     vignette_map = 1 - vignette_map
     cv2.normalize(vignette_map, vignette_map, 0, 1.0, cv2.NORM_MINMAX)
     # use labels_indices to index labels
@@ -73,11 +81,6 @@ def apply_vignette(image, labels, amount=0.5):
     return result.astype(image.dtype)
 
 
-force_landscape = A.Lambda(
-    name="force_landscape", image=rotate_if_portrait, mask=rotate_if_portrait
-)
-
-
 class ImageMaskTransform(A.DualTransform):
     def __init__(self, amount, channel_index, p=1.0):
         super().__init__(True, p)
@@ -98,6 +101,18 @@ class ImageMaskTransform(A.DualTransform):
     def get_params_dependent_on_data(self, params, data):
         # this is the key part
         return {"image_mask": data["mask"]}
+
+
+class MaskVignetteTransform(A.DualTransform):
+    def __init__(self, amount, p=1.0):
+        super().__init__(True, p)
+        self.amount = amount
+
+    def apply(self, img, **kwargs):
+        return img
+
+    def apply_to_mask(self, mask, **kwargs):
+        return get_vignette(mask, self.amount)
 
 
 def get_preprocessing_transform(cfg: PreprocessingConfig):
@@ -136,13 +151,7 @@ def get_train_transform(cfg: AugmentationConfig):
             A.HorizontalFlip(**cfg.horizontal_flip),
             A.VerticalFlip(**cfg.vertical_flip),
             A.Normalize(),
-            A.Lambda(
-                name="mask_vignette",
-                image=lambda x, **kwargs: x,
-                mask=lambda mask, **kwargs: get_vignette(
-                    mask, amount=cfg.mask_vignette_amount
-                ),
-            ),
+            MaskVignetteTransform(amount=cfg.mask_vignette_amount, p=1.0),
             A.ToTensorV2(transpose_mask=True),
         ]
     )

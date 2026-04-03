@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv",
     "segmentation-models-pytorch",
     "setuptools<82.0.0",
+    "soundfile>=0.13.1",
     "tensorboard>=2.20.0",
     "tifffile>=2026.3.3",
 ]

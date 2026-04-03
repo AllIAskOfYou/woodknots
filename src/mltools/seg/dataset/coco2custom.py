@@ -45,6 +45,7 @@ class COCO2CustomConvertor:
             )
 
         img_path = os.path.join(self.output_dir, "images", f"{case_id}.png")
+        # label_path = os.path.join(self.output_dir, "labels", f"{case_id}.png")
         label_path = os.path.join(self.output_dir, "labels", f"{case_id}.tiff")
 
         # Convert image and label to uint8 format for saving
@@ -52,11 +53,22 @@ class COCO2CustomConvertor:
         label = (label * 255).astype(np.uint8)
 
         Image.fromarray(image).save(img_path)
+        # Image.fromarray(label).save(label_path)
         # add channel name metadata to label
-        metadata = {
-            "axes": "YXC",
-        }
-        tiff.imwrite(label_path, label, photometric="minisblack", metadata=metadata)
+        stack_data = np.moveaxis(label, -1, 0).astype("uint8")
+
+        # 2. Save as a multi-page Grayscale TIFF
+        tiff.imwrite(
+            label_path,
+            stack_data,
+            photometric="minisblack",  # Tells the viewer each page is grayscale
+            metadata={"axes": "CYX"},  # Explicitly labels the dimensions
+            imagej=True,  # Adds the scrollbar metadata for better viewers
+        )
+        # metadata = {
+        #     "axes": "YXC",
+        # }
+        # tiff.imwrite(label_path, label, photometric="minisblack", metadata=metadata)
 
     def convert_case(self, idx):
         case_id = self.dataset.image_index_to_name(idx)
