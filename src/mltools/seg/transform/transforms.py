@@ -5,13 +5,6 @@ from mltools.seg.schema import AugmentationConfig
 import numpy as np
 from scipy.stats import norm
 
-INFERENCE_TRANSFORM = A.Compose(
-    [
-        A.Normalize(),
-        A.ToTensorV2(transpose_mask=True),
-    ]
-)
-
 
 def rotate_if_portrait(data, **kwargs):
     h, w = data.shape[:2]
@@ -155,3 +148,21 @@ def get_train_transform(cfg: AugmentationConfig):
             A.ToTensorV2(transpose_mask=True),
         ]
     )
+
+
+def get_val_transform(cfg: AugmentationConfig):
+    return A.Compose(
+        [
+            A.Normalize(),
+            MaskVignetteTransform(amount=cfg.mask_vignette_amount, p=1.0),
+            A.ToTensorV2(transpose_mask=True),
+        ]
+    )
+
+
+INFERENCE_TRANSFORM = A.Compose(
+    [
+        A.Normalize(),
+        A.ToTensorV2(transpose_mask=True),
+    ]
+)

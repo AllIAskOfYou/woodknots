@@ -43,6 +43,8 @@ class Metric(ABC):
         pass
 
     def compute(self, inputs: torch.Tensor, targets: torch.Tensor) -> float:
+        inputs = inputs.detach()
+        targets = targets.detach()
         if self.soft:
             preds = torch.sigmoid(inputs)
         else:

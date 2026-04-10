@@ -4,15 +4,15 @@ import lightning as L
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 
-from mltools.seg.dataset import get_dataset_by_config, get_metadata, SegDataset
+from mltools.seg.dataset import get_dataset_by_config, SegDataset
 from mltools.seg.schema import TrainConfig
 from mltools.seg.transform import (
     get_preprocessing_transform,
     get_train_transform,
-    INFERENCE_TRANSFORM,
+    get_val_transform,
 )
-from mltools.seg.dataset.utils import get_fold
 from mltools.seg.module import SegModule
+from mltools.utils.data import get_metadata, get_fold
 
 
 @hydra.main(version_base="1.3", config_path="../configs", config_name="config")
@@ -30,7 +30,7 @@ def main(cfg: TrainConfig):
     train_cases, val_cases = get_fold(root_path, fold=cfg.fold, k=5)
     preprocessing = get_preprocessing_transform(cfg.preprocessing)
     train_transform = get_train_transform(cfg.augmentation)
-    val_transform = INFERENCE_TRANSFORM
+    val_transform = get_val_transform(cfg.augmentation)
 
     train_dataset = SegDataset(
         root_path,

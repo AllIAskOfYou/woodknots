@@ -39,32 +39,3 @@ def get_dataset_by_config(cfg: DatasetConfig):
         OmegaConf.save(config=cfg, f=config_path)
 
     return root_path
-
-
-def get_metadata(data_path):
-    with open(Path(data_path) / "metadata.json", "r") as f:
-        metadata = json.load(f)
-    return metadata
-
-
-def _filter_groups(groups: list[list[str]], valid_ids: set[str]):
-    filtered_groups = list()
-    for group in groups:
-        filtered_group = [id for id in group if id in valid_ids]
-        if filtered_group:
-            filtered_groups.append(filtered_group)
-    return filtered_groups
-
-
-def get_fold(data_path, k=5, fold=0):
-    # load groups from metadata
-    with open(Path(METADATA_DIR) / "groups.json", "r") as f:
-        groups = json.load(f)
-
-    files = os.listdir(Path(data_path) / "images")
-    valid_ids = set(Path(file).stem for file in files)
-    groups = _filter_groups(groups, valid_ids)
-
-    train_ids, val_ids = split_k_fold_by_groups(groups, k=k, fold=fold, seed=42)
-    print(f"Generated folds, using fold [{fold}].")
-    return train_ids, val_ids

@@ -1,0 +1,14 @@
+hydra:
+  run:
+    # This changes where the .hydra/ folder and logs go
+    dir: experiments/yolo/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+defaults:
+  - dataset: default
+#  - augmentation: default
+  - _self_
+
+model_path: "yolo26m-seg.pt"
+imgsz: 640
+batch: 8
+epochs: 10

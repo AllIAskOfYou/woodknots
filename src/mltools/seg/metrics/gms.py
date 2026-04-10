@@ -13,7 +13,7 @@ def _compute_instance_gms(preds_alpha, targets_alpha, iou_threshold=0.5):
 
     # Thresholding (using 0.5 as per your original logic)
     p_mask = (preds_alpha > 0.5).astype(np.uint8)
-    t_mask = (targets_alpha > 0.0).astype(np.uint8)
+    t_mask = (targets_alpha > 0.5).astype(np.uint8)
 
     # 2. Connected Components with Stats
     # stats: [x, y, width, height, area]

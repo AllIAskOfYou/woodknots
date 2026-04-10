@@ -4,7 +4,7 @@ freeze_encoder: false
 
 model:
   _target_: segmentation_models_pytorch.MAnet
-  encoder_name: mit_b1
+  encoder_name: mit_b0
   encoder_weights: imagenet
   in_channels: 3
   classes: 1
@@ -12,7 +12,7 @@ model:
 optimizer:
   _target_: torch.optim.AdamW
   lr: 1e-4
-  weight_decay: 0.0001
+  weight_decay: 0.01
 
 scheduler:
   _target_: torch.optim.lr_scheduler.LinearLR

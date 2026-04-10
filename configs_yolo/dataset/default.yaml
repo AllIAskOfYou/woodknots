@@ -1,0 +1,10 @@
+image_config:
+  resolution: 640
+label_config:
+  primary_log: True
+  wood_knot: [0.2, 0.6, 1.0]
+  wood_knot_categorization: "separate"
+fold_config:
+  k: 5
+  fold: 0
+  seed: 42

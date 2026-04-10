@@ -4,4 +4,6 @@ data/
 **/__pycache__/
 **/*.egg-info
 experiments/
+experiments_yolo/
 **/*code-workspace
+**/*.pt

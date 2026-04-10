@@ -27,7 +27,7 @@ class SegModule(L.LightningModule):
             "dice_nobg": DiceScore(soft=False, background=False, average="macro"),
             "dice_soft": DiceScore(soft=True, background=True, average="macro"),
             "iou": IoUScore(soft=False, background=True, average="macro"),
-            # "gms": GMSScore(average="macro"),
+            "gms": GMSScore(average="macro"),
         }
 
     def forward(self, x):
