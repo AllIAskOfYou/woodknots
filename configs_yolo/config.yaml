@@ -8,7 +8,7 @@ defaults:
 #  - augmentation: default
   - _self_
 
-model_path: "yolo26m-seg.pt"
+model_path: "yolo26n-seg.pt"
 imgsz: 640
-batch: 8
-epochs: 10
+batch: 6
+epochs: 5
