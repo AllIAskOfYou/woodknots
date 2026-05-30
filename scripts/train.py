@@ -10,6 +10,7 @@ from mltools.seg.transform import (
     get_preprocessing_transform,
     get_train_transform,
     get_val_transform,
+    INFERENCE_TRANSFORM,
 )
 from mltools.seg.module import SegModule
 from mltools.utils.data import get_metadata, get_fold
@@ -30,7 +31,8 @@ def main(cfg: TrainConfig):
     train_cases, val_cases = get_fold(root_path, fold=cfg.fold, k=5)
     preprocessing = get_preprocessing_transform(cfg.preprocessing)
     train_transform = get_train_transform(cfg.augmentation)
-    val_transform = get_val_transform(cfg.augmentation)
+    val_transform = INFERENCE_TRANSFORM
+    # val_transform = get_val_transform(cfg.augmentation)
 
     train_dataset = SegDataset(
         root_path,
