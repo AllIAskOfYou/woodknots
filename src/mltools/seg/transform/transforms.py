@@ -25,9 +25,10 @@ class ForceLandscape(A.DualTransform):
         return rotate_if_portrait(mask)
 
 
-def get_vignette(labels, amount=0.5):
-    labels = labels.astype(np.float32)
+def get_vignette(labels, amount=0.5, invert=False):
     mask = (labels > 0).astype(np.uint8) * 255
+    if not invert:
+        mask = ~mask
     if not np.any(mask):
         return np.zeros_like(mask, dtype=np.float32)
     if amount <= 0:
@@ -36,9 +37,7 @@ def get_vignette(labels, amount=0.5):
         return np.ones_like(mask, dtype=np.float32)
 
     # mask should be uint8 (0 and 255)
-    dist, labels_indices = cv2.distanceTransformWithLabels(
-        ~mask, cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL
-    )
+    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
     # return labels_indices, dist
 
     # The kernel size should be proportional to image resolution
@@ -49,15 +48,10 @@ def get_vignette(labels, amount=0.5):
     # apply bell curve for falloff control
     scale = res * 0.5
     vignette_map = norm.cdf(vignette_map, loc=0, scale=(scale * amount))
-    vignette_map = 1 - vignette_map
+    if not invert:
+        vignette_map = 1 - vignette_map
     cv2.normalize(vignette_map, vignette_map, 0, 1.0, cv2.NORM_MINMAX)
-    # use labels_indices to index labels
-    vignette_map = vignette_map[:, :, np.newaxis]
-    flat_labels = labels[labels > 0].flatten()
-    # add dim to the end
-    labels_map = flat_labels[labels_indices - 1][..., np.newaxis]
-    vignette_map = vignette_map * labels_map
-    return vignette_map.astype(np.float32)
+    return vignette_map.astype(np.float32)[..., np.newaxis]
 
 
 def apply_vignette(image, labels, amount=0.5):
@@ -65,8 +59,8 @@ def apply_vignette(image, labels, amount=0.5):
     Applies a contour-aware vignette.
     amount: 0.0 (no effect) to 1.0 (full mask falloff)
     """
-    vignette_map = get_vignette(labels, 1 - amount)
-
+    vignette_map = get_vignette(labels, 1 - amount, invert=False)
+    print(f"VIGNETTE: image shape: {image.shape}, labels shape: {labels.shape}, vignette_map shape: {vignette_map.shape}")
     # apply to image
     # ensure image is float for multiplication
     result = image * vignette_map
@@ -105,7 +99,8 @@ class MaskVignetteTransform(A.DualTransform):
         return img
 
     def apply_to_mask(self, mask, **kwargs):
-        return get_vignette(mask, self.amount)
+        alpha = get_vignette(mask, self.amount, invert=True)
+        return mask * alpha
 
 
 def get_preprocessing_transform(cfg: PreprocessingConfig):

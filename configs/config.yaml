@@ -4,7 +4,7 @@ hydra:
     dir: experiments/light/${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 defaults:
-  - dataset: Min256
+  - dataset: Min512
   - preprocessing: default
   - augmentation: default
   - module: default
@@ -16,7 +16,7 @@ total_epochs: 300
 
 class_name: "wood_knot"
 class_groups: null
-  # - value: 1.0
+  #- value: 1.0
   #   classes: [1.0]
   #  classes: [0.6, 1.0]
   #- value: 2.0

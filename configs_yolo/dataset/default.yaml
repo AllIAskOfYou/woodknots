@@ -1,9 +1,9 @@
 image_config:
-  resolution: 640
+  resolution: 1280
 label_config:
   primary_log: True
-  wood_knot: [0.2, 0.6, 1.0]
-  wood_knot_categorization: "separate"
+  wood_knot: [0.6, 1.0]
+  wood_knot_categorization: "combined"
 fold_config:
   k: 5
   fold: 0

@@ -34,7 +34,7 @@ class SegModule(L.LightningModule):
         res = self.cfg.resolution
         with torch.no_grad():
             outputs = sliding_window_inference(
-                x, roi_size=(res, res), sw_batch_size=4, predictor=self.model
+                x, roi_size=(res, res), sw_batch_size=4, predictor=self.model, device=x.device, overlap=0.5, mode="gaussian"
             )
         preds = torch.sigmoid(outputs)
         return preds

@@ -49,7 +49,7 @@ class Metric(ABC):
             preds = torch.sigmoid(inputs)
         else:
             preds = inputs > 0.0
-            # targets = targets > 0.5
+            targets = targets > 0.5
             preds = preds.long()
             targets = targets.long()
         if self.background:

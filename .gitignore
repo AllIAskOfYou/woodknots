@@ -7,3 +7,5 @@ experiments/
 experiments_yolo/
 **/*code-workspace
 **/*.pt
+runs
+slurm_logs

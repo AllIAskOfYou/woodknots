@@ -1,3 +1,3 @@
-resolution: 256
+resolution: 512
 w2h_ratio: 1.0
-mask_vignette_amount: 0.0
+mask_vignette_amount: 0.3

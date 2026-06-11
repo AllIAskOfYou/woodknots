@@ -81,7 +81,7 @@ def main(cfg: TrainConfig):
     trainer = L.Trainer(
         max_epochs=cfg.total_epochs,
         accelerator="cuda",
-        devices=[1],
+        devices=[0],
         log_every_n_steps=10,
         callbacks=[checkpoint_callback],
         check_val_every_n_epoch=5,
