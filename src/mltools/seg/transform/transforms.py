@@ -58,37 +58,25 @@ def get_vignette(labels, steepness=5, midpoint=0.1, invert=False):
     return vignette_map[..., np.newaxis]
 
 
-def apply_vignette(image, labels, steepness=5, midpoint=0.1):
-    """
-    Applies a contour-aware vignette.
-    steepness: Controls the sharpness of the vignette falloff
-    midpoint: Controls the center of the vignette falloff
-    """
-    vignette_map = get_vignette(labels, steepness, midpoint, invert=False)
-    # apply to image
-    # ensure image is float for multiplication
-    result = image * vignette_map
-
-    return result.astype(image.dtype)
-
-
 class ImageMaskTransform(A.DualTransform):
-    def __init__(self, steepness, midpoint, channel_index, p=1.0):
+    def __init__(self, distance, channel_index, p=1.0):
         super().__init__(True, p)
-        self.steepness = steepness
-        self.midpoint = midpoint
+        self.distance = distance
         self.channel_index = channel_index
 
     def apply(self, img, **kwargs):
         mask = kwargs.get("image_mask", None)
         if mask is None:
             raise ValueError("Mask is required for ImageMaskTransform")
-        return apply_vignette(
-            img,
-            mask[..., self.channel_index : self.channel_index + 1],
-            self.steepness,
-            self.midpoint,
-        )
+        mask_channel = mask[..., self.channel_index : self.channel_index + 1]
+        binary_mask = (~(mask_channel > 0)).astype(np.uint8)
+        dist = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 5)
+        alpha = dist < self.distance
+        # blur the alpha mask to create a smooth transition
+        res = int(self.distance * 2) | 1  # Must be odd
+        alpha = cv2.GaussianBlur(alpha.astype(np.float32), (res, res), 0)
+        alpha = alpha[..., np.newaxis]
+        return (img.astype(np.float32) * alpha).astype(img.dtype)
 
     def apply_to_mask(self, mask, **kwargs):
         return mask
@@ -116,11 +104,10 @@ class MaskVignetteTransform(A.DualTransform):
 
 def get_preprocessing_transform(cfg: PreprocessingConfig):
     transforms = []
-    if cfg.mask_image is not None and cfg.mask_image.steepness > 0:
+    if cfg.mask_image is not None and cfg.mask_image.distance > 0:
         transforms.append(
             ImageMaskTransform(
-                steepness=cfg.mask_image.steepness,
-                midpoint=cfg.mask_image.midpoint,
+                distance=cfg.mask_image.distance,
                 channel_index=cfg.mask_image.channel_index,
             )
         )
