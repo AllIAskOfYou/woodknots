@@ -11,7 +11,7 @@ defaults:
   - _self_
 
 fold: 0
-batch_size: 20
+batch_size: 8
 total_epochs: 300
 
 class_name: "wood_knot"

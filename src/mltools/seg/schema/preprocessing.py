@@ -5,7 +5,8 @@ from dataclasses import dataclass
 @dataclass
 class MaskImageConfig:
     channel_index: int
-    amount: float
+    steepness: float
+    midpoint: float
 
 
 @dataclass

@@ -11,6 +11,16 @@ from mltools.seg.metrics import DiceScore, IoUScore, GMSScore
 from pathlib import Path
 
 
+def denormalize_image(image_tensor):
+    # Assuming the image was normalized using ImageNet stats
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    image_np = image_tensor.cpu().numpy().transpose(1, 2, 0)  # CxHxW to HxWxC
+    image_denorm = (image_np * std) + mean
+    image_denorm = np.clip(image_denorm, 0, 1)
+    return image_denorm
+
+
 class SegModule(L.LightningModule):
     def __init__(self, module_cfg: ModuleConfig):
         super().__init__()
@@ -34,7 +44,13 @@ class SegModule(L.LightningModule):
         res = self.cfg.resolution
         with torch.no_grad():
             outputs = sliding_window_inference(
-                x, roi_size=(res, res), sw_batch_size=4, predictor=self.model, device=x.device, overlap=0.5, mode="gaussian"
+                x,
+                roi_size=(res, res),
+                sw_batch_size=4,
+                predictor=self.model,
+                device=x.device,
+                overlap=0.5,
+                mode="gaussian",
             )
         preds = torch.sigmoid(outputs)
         return preds
@@ -76,15 +92,21 @@ class SegModule(L.LightningModule):
             )
         outputs = outputs.detach()
         masks = masks.detach()
-
         if batch_idx < 4:
             # save the first batch of masks and outputs for visualization
             # save to the logging directory under "samples" subdirectory
             sample_dir = Path(self.logger.log_dir) / "samples"
             sample_dir.mkdir(exist_ok=True)
+            # denormalize the images from imagenet and convert to uint8
+            image_denorm = denormalize_image(images[0])
+            image_long = (image_denorm * 255).astype(np.uint8)
+            image_long = cv2.cvtColor(
+                image_long, cv2.COLOR_RGB2BGR
+            )  # convert to BGR for OpenCV
             mask_long = (masks.cpu().numpy() * 255).astype(np.uint8)
             output_long = (torch.sigmoid(outputs).cpu().numpy() * 255).astype(np.uint8)
 
+            cv2.imwrite(sample_dir / f"image_{batch_idx}.png", image_long)
             cv2.imwrite(sample_dir / f"mask_{batch_idx}.png", mask_long[0, 0])
             cv2.imwrite(sample_dir / f"output_{batch_idx}.png", output_long[0, 0])
 

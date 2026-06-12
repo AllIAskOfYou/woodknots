@@ -1,3 +1,12 @@
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true # Only use this index when explicitly requested
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+
 [project]
 name = "mltools"
 version = "0.1.0"

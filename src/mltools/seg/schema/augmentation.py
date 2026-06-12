@@ -42,6 +42,12 @@ class ColorJitterConfig:
 
 
 @dataclass
+class MaskVignetteConfig:
+    steepness: float
+    midpoint: float
+
+
+@dataclass
 class AugmentationConfig:
     resolution: int
     w2h_ratio: float
@@ -50,4 +56,4 @@ class AugmentationConfig:
     horizontal_flip: FlipConfig
     vertical_flip: FlipConfig
     color_jitter: ColorJitterConfig
-    mask_vignette_amount: float
+    mask_vignette: MaskVignetteConfig

@@ -1,3 +1,6 @@
 resolution: 512
 w2h_ratio: 1.0
-mask_vignette_amount: 0.3
+
+mask_vignette:
+  steepness: 2
+  midpoint: 0.2

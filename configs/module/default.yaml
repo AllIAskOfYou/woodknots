@@ -3,8 +3,8 @@ total_epochs: ${total_epochs}
 freeze_encoder: false
 
 model:
-  _target_: segmentation_models_pytorch.MAnet
-  encoder_name: tu-convnextv2_base #mit_b0
+  _target_: segmentation_models_pytorch.Unet
+  encoder_name: mit_b0
   encoder_weights: imagenet
   in_channels: 3
   classes: 1

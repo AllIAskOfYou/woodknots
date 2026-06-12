@@ -25,42 +25,46 @@ class ForceLandscape(A.DualTransform):
         return rotate_if_portrait(mask)
 
 
-def get_vignette(labels, amount=0.5, invert=False):
-    mask = (labels > 0).astype(np.uint8) * 255
+def get_vignette(labels, steepness=5, midpoint=0.1, invert=False):
+    binary_mask = (labels > 0).astype(np.uint8)
     if not invert:
-        mask = ~mask
-    if not np.any(mask):
-        return np.zeros_like(mask, dtype=np.float32)
-    if amount <= 0:
+        binary_mask = 1 - binary_mask
+    if not np.any(binary_mask):
+        return np.zeros_like(binary_mask, dtype=np.float32)
+    if steepness <= 0:
         return labels
-    if amount >= 1:
-        return np.ones_like(mask, dtype=np.float32)
 
-    # mask should be uint8 (0 and 255)
-    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    # return labels_indices, dist
-
-    # The kernel size should be proportional to image resolution
-    res = min(labels.shape[0:2])
-    blur_size = int(res * 0.1) | 1  # Must be odd
-    vignette_map = cv2.GaussianBlur(dist, (blur_size, blur_size), 0)
-
-    # apply bell curve for falloff control
-    scale = res * 0.5
-    vignette_map = norm.cdf(vignette_map, loc=0, scale=(scale * amount))
+    # normalize distance to [0, 1] inside each component based on label_indices
+    num_labels, labels_map = cv2.connectedComponents(binary_mask)
+    vignette_map = np.zeros(shape=labels.shape[:2], dtype=np.float32)
+    for i in range(1, num_labels):  # Skip background
+        component_mask = (labels_map == i).astype(np.uint8)
+        dist = cv2.distanceTransform(component_mask, cv2.DIST_L2, 5)
+        if dist.max() <= 0:
+            continue
+        # blur based on component size
+        bb = cv2.boundingRect(component_mask)
+        res = int(min(bb[2], bb[3]))
+        blur_size = int(res * 0.5) | 1  # Must be odd
+        blur_size = np.clip(blur_size, 3, 51)  # Clamp to reasonable range
+        dist = cv2.GaussianBlur(dist, (blur_size, blur_size), 0)
+        cv2.normalize(dist, dist, 0, 1.0, cv2.NORM_MINMAX)
+        dist = 1 / (1 + np.exp(-steepness * (dist - midpoint)))
+        cv2.normalize(dist, dist, 0, 1.0, cv2.NORM_MINMAX)
+        dist = np.clip(dist, 0, 1)
+        vignette_map += dist
     if not invert:
         vignette_map = 1 - vignette_map
-    cv2.normalize(vignette_map, vignette_map, 0, 1.0, cv2.NORM_MINMAX)
-    return vignette_map.astype(np.float32)[..., np.newaxis]
+    return vignette_map[..., np.newaxis]
 
 
-def apply_vignette(image, labels, amount=0.5):
+def apply_vignette(image, labels, steepness=5, midpoint=0.1):
     """
     Applies a contour-aware vignette.
-    amount: 0.0 (no effect) to 1.0 (full mask falloff)
+    steepness: Controls the sharpness of the vignette falloff
+    midpoint: Controls the center of the vignette falloff
     """
-    vignette_map = get_vignette(labels, 1 - amount, invert=False)
-    print(f"VIGNETTE: image shape: {image.shape}, labels shape: {labels.shape}, vignette_map shape: {vignette_map.shape}")
+    vignette_map = get_vignette(labels, steepness, midpoint, invert=False)
     # apply to image
     # ensure image is float for multiplication
     result = image * vignette_map
@@ -69,9 +73,10 @@ def apply_vignette(image, labels, amount=0.5):
 
 
 class ImageMaskTransform(A.DualTransform):
-    def __init__(self, amount, channel_index, p=1.0):
+    def __init__(self, steepness, midpoint, channel_index, p=1.0):
         super().__init__(True, p)
-        self.amount = amount
+        self.steepness = steepness
+        self.midpoint = midpoint
         self.channel_index = channel_index
 
     def apply(self, img, **kwargs):
@@ -79,7 +84,10 @@ class ImageMaskTransform(A.DualTransform):
         if mask is None:
             raise ValueError("Mask is required for ImageMaskTransform")
         return apply_vignette(
-            img, mask[..., self.channel_index : self.channel_index + 1], self.amount
+            img,
+            mask[..., self.channel_index : self.channel_index + 1],
+            self.steepness,
+            self.midpoint,
         )
 
     def apply_to_mask(self, mask, **kwargs):
@@ -91,24 +99,28 @@ class ImageMaskTransform(A.DualTransform):
 
 
 class MaskVignetteTransform(A.DualTransform):
-    def __init__(self, amount, p=1.0):
+    def __init__(self, steepness, midpoint, p=1.0):
         super().__init__(True, p)
-        self.amount = amount
+        self.steepness = steepness
+        self.midpoint = midpoint
 
     def apply(self, img, **kwargs):
         return img
 
     def apply_to_mask(self, mask, **kwargs):
-        alpha = get_vignette(mask, self.amount, invert=True)
-        return mask * alpha
+        vignette_map = get_vignette(mask, self.steepness, self.midpoint, invert=True)
+        res = int(min(mask.shape[1], mask.shape[0]) * 0.1) | 1
+        mask_blurred = cv2.GaussianBlur(mask.astype(np.float32), (res, res), 0)
+        return mask_blurred[..., np.newaxis] * vignette_map
 
 
 def get_preprocessing_transform(cfg: PreprocessingConfig):
     transforms = []
-    if cfg.mask_image is not None and cfg.mask_image.amount > 0:
+    if cfg.mask_image is not None and cfg.mask_image.steepness > 0:
         transforms.append(
             ImageMaskTransform(
-                amount=cfg.mask_image.amount,
+                steepness=cfg.mask_image.steepness,
+                midpoint=cfg.mask_image.midpoint,
                 channel_index=cfg.mask_image.channel_index,
             )
         )
@@ -139,7 +151,11 @@ def get_train_transform(cfg: AugmentationConfig):
             A.HorizontalFlip(**cfg.horizontal_flip),
             A.VerticalFlip(**cfg.vertical_flip),
             A.Normalize(),
-            MaskVignetteTransform(amount=cfg.mask_vignette_amount, p=1.0),
+            MaskVignetteTransform(
+                steepness=cfg.mask_vignette.steepness,
+                midpoint=cfg.mask_vignette.midpoint,
+                p=1.0,
+            ),
             A.ToTensorV2(transpose_mask=True),
         ]
     )
@@ -149,7 +165,11 @@ def get_val_transform(cfg: AugmentationConfig):
     return A.Compose(
         [
             A.Normalize(),
-            MaskVignetteTransform(amount=cfg.mask_vignette_amount, p=1.0),
+            MaskVignetteTransform(
+                steepness=cfg.mask_vignette.steepness,
+                midpoint=cfg.mask_vignette.midpoint,
+                p=1.0,
+            ),
             A.ToTensorV2(transpose_mask=True),
         ]
     )
