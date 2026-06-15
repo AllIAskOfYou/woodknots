@@ -57,3 +57,4 @@ class AugmentationConfig:
     vertical_flip: FlipConfig
     color_jitter: ColorJitterConfig
     mask_vignette: MaskVignetteConfig
+    mosaic_p: float

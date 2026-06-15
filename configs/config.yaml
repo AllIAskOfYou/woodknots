@@ -11,13 +11,13 @@ defaults:
   - _self_
 
 fold: 0
-batch_size: 8
-total_epochs: 300
+batch_size: 20
+total_epochs: 100
 
 class_name: "wood_knot"
 class_groups: null
-  #- value: 1.0
-  #   classes: [1.0]
-  #  classes: [0.6, 1.0]
-  #- value: 2.0
-  #  classes: [0.2, 0.6]
+# - value: 1.0
+#   classes: [1.0]
+#   classes: [0.6, 1.0]
+# - value: 0.6
+#   classes: [0.6]

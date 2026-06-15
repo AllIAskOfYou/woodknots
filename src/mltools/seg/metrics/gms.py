@@ -122,3 +122,5 @@ class GMSScore(Metric):
 
     def __call__(self, inputs: torch.Tensor, targets: torch.Tensor):
         return _greedy_matching_score(inputs, targets)
+    
+

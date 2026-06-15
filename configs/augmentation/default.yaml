@@ -13,7 +13,7 @@ distortion:
   e2g_ratio: 1.0
 
 random_crop:
-  scale: [1.0, 1.0]
+  scale: [1.0, 1.5]
   rotation: [-180, 180]
 
 horizontal_flip:
@@ -23,8 +23,8 @@ vertical_flip:
   p: 0.5
 
 color_jitter:
-  brightness: 0.4
-  contrast: 0.4
-  saturation: 0.2
+  brightness: 0.5
+  contrast: 0.5
+  saturation: 0.3
   hue: 0.1
   p: 0.9

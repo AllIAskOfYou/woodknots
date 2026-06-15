@@ -1,6 +1,9 @@
+import cv2
 import hydra
 from hydra.core.hydra_config import HydraConfig
 import lightning as L
+import numpy as np
+from pathlib import Path
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 
@@ -13,6 +16,7 @@ from mltools.seg.transform import (
     INFERENCE_TRANSFORM,
 )
 from mltools.seg.module import SegModule
+from mltools.seg.module.seg_module import denormalize_image
 from mltools.utils.data import get_metadata, get_fold
 
 
@@ -41,6 +45,7 @@ def main(cfg: TrainConfig):
         preprocessing=preprocessing,
         transform=train_transform,
         class_groups=cfg.class_groups,
+        cache_amount=1.0
     )
     val_dataset = SegDataset(
         root_path,
@@ -49,7 +54,20 @@ def main(cfg: TrainConfig):
         preprocessing=preprocessing,
         transform=val_transform,
         class_groups=cfg.class_groups,
+        cache_amount=1.0
     )
+
+    # store 8 samples from the training dataset for visualization during training
+    sample_dir = Path(hydra_dir) / "samples" / "train"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(8):
+        image, mask = train_dataset[i]
+        image_denorm = (denormalize_image(image) * 255).astype(np.uint8)
+        image_denorm = cv2.cvtColor(image_denorm, cv2.COLOR_RGB2BGR)
+        mask_long = (mask.detach().cpu().numpy() * 255).astype(np.uint8)
+        cv2.imwrite(sample_dir / f"image_{i}.png", image_denorm)
+        cv2.imwrite(sample_dir / f"mask_{i}.png", mask_long[0])
+
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset, batch_size=cfg.batch_size, shuffle=True, num_workers=0
@@ -77,17 +95,16 @@ def main(cfg: TrainConfig):
         filename="best-model-{epoch:02d}-{val_dice:.4f}",
         save_last=True,  # Also keep a 'last.ckpt' for resuming
     )
-
+    module.freeze_encoder()
     trainer = L.Trainer(
-        max_epochs=cfg.total_epochs,
+        max_epochs=100,
         accelerator="cuda",
         devices=[0],
-        log_every_n_steps=10,
+        log_every_n_steps=1,
         callbacks=[checkpoint_callback],
-        check_val_every_n_epoch=5,
+        check_val_every_n_epoch=1,
         logger=logger,
     )
-
     trainer.fit(module, train_dataloader, val_dataloader)
 
 

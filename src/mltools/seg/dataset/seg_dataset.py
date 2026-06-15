@@ -48,11 +48,12 @@ class SegDataset(Dataset):
         self.transform = transform
         cache_size = int(len(self.cases) * cache_amount)
         self.cache_size = cache_size
+        self.class_groups = class_groups
+        self.rng = np.random.default_rng()
         self.data = [
             self.get_case(data_path, case_id)
             for case_id in tqdm.tqdm(self.cases[:cache_size], desc="Caching data...")
         ]
-        self.class_groups = class_groups
 
     def get_case(self, data_path, case_id):
         image, label = load_case(data_path, case_id)
@@ -61,6 +62,12 @@ class SegDataset(Dataset):
             image, label = preprocessed["image"], preprocessed["mask"]
         # index label, keep dims
         label = label[..., self.channel_index : self.channel_index + 1]
+        if self.class_groups is not None:
+            mapped_label = np.zeros_like(label, dtype=np.float32)
+            for group in self.class_groups:
+                for class_value in group.classes:
+                    mapped_label[label == class_value] = group.value
+            label = mapped_label
         return image, label
 
     def __len__(self):
@@ -71,14 +78,24 @@ class SegDataset(Dataset):
             image, label = self.data[idx]
         else:
             image, label = self.get_case(self.data_path, self.cases[idx])
-        if self.class_groups is not None:
-            mapped_label = np.zeros_like(label, dtype=np.float32)
-            for group in self.class_groups:
-                for class_value in group.classes:
-                    mapped_label[label == class_value] = group.value
-            label = mapped_label
         if self.transform is not None:
-            transformed = self.transform(image=image, mask=label)
+            # select 3 images for mosaic augmentation
+            indexes = self.rng.choice(len(self) - 1, size=3, replace=False)
+            indexes = [
+                i if i < idx else i + 1 for i in indexes
+            ]  # avoid selecting the same index
+            mosaic_metadata = []
+            for i in indexes:
+                mosaic_image, mosaic_label = (
+                    self.data[i]
+                    if i < self.cache_size
+                    else self.get_case(self.data_path, self.cases[i])
+                )
+                mosaic_metadata.append({"image": mosaic_image, "mask": mosaic_label})
+
+            transformed = self.transform(
+                image=image, mask=label, mosaic_metadata=mosaic_metadata
+            )
             image = transformed["image"]
             label = transformed["mask"]
         return image, label

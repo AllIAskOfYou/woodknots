@@ -96,6 +96,8 @@ class MaskVignetteTransform(A.DualTransform):
         return img
 
     def apply_to_mask(self, mask, **kwargs):
+        if self.steepness <= 0:
+            return mask
         vignette_map = get_vignette(mask, self.steepness, self.midpoint, invert=True)
         res = int(min(mask.shape[1], mask.shape[0]) * 0.1) | 1
         mask_blurred = cv2.GaussianBlur(mask.astype(np.float32), (res, res), 0)
@@ -115,26 +117,72 @@ def get_preprocessing_transform(cfg: PreprocessingConfig):
 
 
 def get_train_transform(cfg: AugmentationConfig):
-    return A.Compose(
+    # Common size parameters
+    target_size = (cfg.resolution, int(cfg.resolution * cfg.w2h_ratio))
+
+    # Common crop parameters
+    crop_params = {
+        "min_max_height": (
+            int(cfg.resolution * cfg.random_crop.scale[0]),
+            int(cfg.resolution * cfg.random_crop.scale[1]),
+        ),
+        "w2h_ratio": cfg.w2h_ratio,
+        "size": target_size,
+        "p": 1.0,
+    }
+
+    # Common distortion transforms
+    distortion_transforms = A.OneOf(
         [
-            A.ColorJitter(**cfg.color_jitter),
-            A.OneOf(
-                [
-                    A.ElasticTransform(**cfg.distortion.elastic, p=1.0),
-                    A.GridDistortion(**cfg.distortion.grid, p=cfg.distortion.e2g_ratio),
-                ],
-                p=cfg.distortion.p,
+            A.ElasticTransform(**cfg.distortion.elastic, p=1.0),
+            A.GridDistortion(
+                **cfg.distortion.grid,
+                p=cfg.distortion.e2g_ratio,
             ),
-            A.RandomSizedCrop(
-                min_max_height=(
-                    int(cfg.resolution * cfg.random_crop.scale[0]),
-                    int(cfg.resolution * cfg.random_crop.scale[1]),
-                ),
-                w2h_ratio=cfg.w2h_ratio,
-                size=(cfg.resolution, int(cfg.resolution * cfg.w2h_ratio)),
+        ],
+        p=cfg.distortion.p,
+    )
+
+    # Mosaic branch
+    mosaic_branch = A.Compose(
+        [
+            A.Mosaic(
+                grid_yx=(2, 2),
+                target_size=target_size,
+                cell_shape=target_size,
+                center_range=(0.4, 0.6),
+                metadata_key="mosaic_metadata",
                 p=1.0,
             ),
+            A.ColorJitter(**cfg.color_jitter),
+            distortion_transforms,
+            A.Rotate(limit=(-25, 25), p=1.0),
+            A.RandomSizedCrop(**crop_params),
+        ],
+        p=cfg.mosaic_p,
+    )
+
+    # Non-mosaic branch
+    non_mosaic_branch = A.Compose(
+        [
+            A.ColorJitter(**cfg.color_jitter),
+            distortion_transforms,
+            A.RandomSizedCrop(**crop_params),
             A.SafeRotate(limit=cfg.random_crop.rotation, p=1.0),
+        ],
+        p=1 - cfg.mosaic_p,
+    )
+
+    return A.Compose(
+        [
+            A.OneOf([mosaic_branch, non_mosaic_branch], p=1.0),
+            A.CoarseDropout(
+                num_holes_range=(1, 3),
+                hole_height_range=(0.05, 0.15),
+                hole_width_range=(0.05, 0.15),
+                fill=0,
+                p=0.4,
+            ),
             A.HorizontalFlip(**cfg.horizontal_flip),
             A.VerticalFlip(**cfg.vertical_flip),
             A.Normalize(),

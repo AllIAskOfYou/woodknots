@@ -10,6 +10,7 @@ from mltools.seg.schema import ModuleConfig
 from mltools.seg.metrics import DiceScore, IoUScore, GMSScore
 from pathlib import Path
 
+from mltools.seg.module.dinov3 import DINOv3FPN, DINOv3MAnet
 
 def denormalize_image(image_tensor):
     # Assuming the image was normalized using ImageNet stats
@@ -24,13 +25,14 @@ def denormalize_image(image_tensor):
 class SegModule(L.LightningModule):
     def __init__(self, module_cfg: ModuleConfig):
         super().__init__()
-        self.model = instantiate(module_cfg.model)
+        # self.model = DINOv3FPN(out_channels=256, num_classes=1)
+        self.model = DINOv3MAnet(num_classes=1)
+        # self.model = instantiate(module_cfg.model)
         # freeze encoder layers
-        if module_cfg.freeze_encoder and hasattr(self.model, "encoder"):
-            for param in self.model.encoder.parameters():
-                param.requires_grad = False
+        if module_cfg.freeze_encoder:
+            self.freeze_encoder()
         self.cfg = module_cfg
-        self.loss = SegLoss()
+        self.loss = SegLoss(labels_smoothing=module_cfg.loss.labels_smoothing)
         self.save_hyperparameters(module_cfg)
         self.metrics = {
             "dice": DiceScore(soft=False, background=True, average="macro"),
@@ -39,6 +41,19 @@ class SegModule(L.LightningModule):
             "iou": IoUScore(soft=False, background=True, average="macro"),
             "gms": GMSScore(average="macro"),
         }
+        self.should_validate = True
+
+    def freeze_encoder(self):
+        if hasattr(self.model, "encoder"):
+            self.model.encoder.eval()
+            for param in self.model.encoder.parameters():
+                param.requires_grad = False
+
+    def unfreeze_encoder(self):
+        if hasattr(self.model, "encoder"):
+            self.model.encoder.train()
+            for param in self.model.encoder.parameters():
+                param.requires_grad = True
 
     def forward(self, x):
         res = self.cfg.resolution
@@ -58,6 +73,7 @@ class SegModule(L.LightningModule):
     def training_step(self, batch: torch.Tensor, batch_idx: int):
         images, masks = batch
         outputs = self.model(images)
+        self.loss.update_weight(batch_idx, self.trainer.estimated_stepping_batches)
         loss = self.loss(outputs, masks)
         self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=False)
         for name in self.metrics:
@@ -77,8 +93,27 @@ class SegModule(L.LightningModule):
             on_step=False,
         )
         return loss
+    
+    def on_validation_epoch_start(self):
+        # Skip validation for first 2 epochs
+        if self.current_epoch < 3:
+            self.should_validate = False
+        else:
+            self.should_validate = True
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int):
+        if not self.should_validate:
+            # return dummy val_dice for checkpointing to work        
+            for name in self.metrics:
+                self.log(
+                    f"val_{name}",
+                    0.0,
+                    prog_bar=True,
+                    on_epoch=True,
+                    on_step=False,
+                )
+            return
+        
         images, masks = batch
         res = self.cfg.resolution
         with torch.no_grad():
@@ -92,11 +127,11 @@ class SegModule(L.LightningModule):
             )
         outputs = outputs.detach()
         masks = masks.detach()
-        if batch_idx < 4:
+        if batch_idx < 8:
             # save the first batch of masks and outputs for visualization
             # save to the logging directory under "samples" subdirectory
-            sample_dir = Path(self.logger.log_dir) / "samples"
-            sample_dir.mkdir(exist_ok=True)
+            sample_dir = Path(self.logger.log_dir) / "samples" / "val"
+            sample_dir.mkdir(parents=True, exist_ok=True)
             # denormalize the images from imagenet and convert to uint8
             image_denorm = denormalize_image(images[0])
             image_long = (image_denorm * 255).astype(np.uint8)
@@ -104,11 +139,16 @@ class SegModule(L.LightningModule):
                 image_long, cv2.COLOR_RGB2BGR
             )  # convert to BGR for OpenCV
             mask_long = (masks.cpu().numpy() * 255).astype(np.uint8)
+            # generate contour/edges from the mask
+            contours, _ = cv2.findContours(
+                mask_long[0, 0], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
             output_long = (torch.sigmoid(outputs).cpu().numpy() * 255).astype(np.uint8)
+            output_long = cv2.cvtColor(output_long[0, 0], cv2.COLOR_GRAY2BGR)
+            cv2.drawContours(output_long, contours, -1, (0, 0, 255), 2)
 
             cv2.imwrite(sample_dir / f"image_{batch_idx}.png", image_long)
-            cv2.imwrite(sample_dir / f"mask_{batch_idx}.png", mask_long[0, 0])
-            cv2.imwrite(sample_dir / f"output_{batch_idx}.png", output_long[0, 0])
+            cv2.imwrite(sample_dir / f"output_{batch_idx}.png", output_long)
 
         loss = self.loss(outputs, masks)
         self.log("val_loss", loss, prog_bar=True)
@@ -128,16 +168,19 @@ class SegModule(L.LightningModule):
             self.cfg.optimizer,
             params=filter(lambda p: p.requires_grad, self.parameters()),
         )
+        total_steps = self.trainer.estimated_stepping_batches
+        
         scheduler = instantiate(
             self.cfg.scheduler,
             optimizer=optimizer,
-            total_iters=int(self.cfg.total_epochs * 0.5),
+            total_iters=total_steps,
+            # total_iters=int(self.cfg.total_epochs * 0.5),
         )
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "epoch",
+                "interval": "step",
                 "frequency": 1,
             },
         }
