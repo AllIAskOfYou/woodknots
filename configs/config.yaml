@@ -16,8 +16,11 @@ total_epochs: 100
 
 class_name: "wood_knot"
 class_groups: null
-# - value: 1.0
-#   classes: [1.0]
+#- value: 1.0
+#  classes: [1.0]
 #   classes: [0.6, 1.0]
+# - value: 0.51
+#   classes: [0.2]
 # - value: 0.6
 #   classes: [0.6]
+comment: "no comment"

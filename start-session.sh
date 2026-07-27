@@ -1,5 +1,5 @@
 #!/bin/bash
-srun -p dev --gres=gpu:A100_80GB --cpus-per-task=8 --mem=32G --time=06:00:00 \
+srun -p dev --gres=gpu --cpus-per-task=8 --mem=32G --time=06:00:00 \
   --container-image=nvcr.io/nvidia/pytorch:26.04-py3 \
   --container-mounts=${PWD}:${PWD} \
   --container-workdir=${PWD} \
@@ -13,4 +13,7 @@ srun -p dev --gres=gpu:A100_80GB --cpus-per-task=8 --mem=32G --time=06:00:00 \
     libgomp1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
+    && set -a \
+    && source secrets.env \
+    && set +a \
     && exec bash"

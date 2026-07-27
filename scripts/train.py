@@ -6,6 +6,7 @@ import numpy as np
 from pathlib import Path
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
+import argparse
 
 from mltools.seg.dataset import get_dataset_by_config, SegDataset
 from mltools.seg.schema import TrainConfig
@@ -28,6 +29,9 @@ def main(cfg: TrainConfig):
             f"Dataset resolution ({cfg.dataset.resolution}) must be >= augmentation resolution ({cfg.augmentation.resolution})"
         )
     print(f"Storing logs in: {hydra_dir}")
+
+    with open(Path(hydra_dir) / cfg.comment, "w") as f:
+        f.write(".")
 
     root_path = get_dataset_by_config(cfg.dataset)
     metadata = get_metadata(root_path)
@@ -80,6 +84,10 @@ def main(cfg: TrainConfig):
     print(f"Val Dataset: {len(val_dataset)} samples")
 
     module = SegModule(cfg.module)
+    # ckpt_path = "experiments/light/2026-06-15/21-08-13/checkpoints/best-model-epoch=33-val_dice=0.8271.ckpt"
+    # ckpt_path = "experiments/light/2026-06-15/21-08-13/checkpoints/last.ckpt"
+    # module = SegModule.load_from_checkpoint(ckpt_path, weights_only=False)
+    # module.cfg = cfg.module
 
     logger = TensorBoardLogger(
         save_dir=hydra_dir,
@@ -96,6 +104,8 @@ def main(cfg: TrainConfig):
         save_last=True,  # Also keep a 'last.ckpt' for resuming
     )
     module.freeze_encoder()
+    # module.model.encoder.train()
+    # module.model.unfreeze_encoder_stages([2, 3])
     trainer = L.Trainer(
         max_epochs=100,
         accelerator="cuda",

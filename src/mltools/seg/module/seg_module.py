@@ -32,7 +32,7 @@ class SegModule(L.LightningModule):
         if module_cfg.freeze_encoder:
             self.freeze_encoder()
         self.cfg = module_cfg
-        self.loss = SegLoss(labels_smoothing=module_cfg.loss.labels_smoothing)
+        self.loss = SegLoss(start_weight=0.5, end_weight=0.5, labels_smoothing=module_cfg.loss.labels_smoothing)
         self.save_hyperparameters(module_cfg)
         self.metrics = {
             "dice": DiceScore(soft=False, background=True, average="macro"),
@@ -96,7 +96,7 @@ class SegModule(L.LightningModule):
     
     def on_validation_epoch_start(self):
         # Skip validation for first 2 epochs
-        if self.current_epoch < 3:
+        if self.current_epoch < 0:
             self.should_validate = False
         else:
             self.should_validate = True
@@ -164,9 +164,11 @@ class SegModule(L.LightningModule):
             )
 
     def configure_optimizers(self):
-        optimizer = instantiate(
-            self.cfg.optimizer,
-            params=filter(lambda p: p.requires_grad, self.parameters()),
+        optimizer = torch.optim.AdamW(
+            params=[
+                {"params": self.model.get_decoder_parameters(), "lr": self.cfg.optimizer.lr},
+            ],
+            weight_decay=self.cfg.optimizer.weight_decay
         )
         total_steps = self.trainer.estimated_stepping_batches
         

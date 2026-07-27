@@ -63,12 +63,13 @@ class DINOv3MAnet(nn.Module):
         
         # 1. Your DINOv3 backbone
         self.encoder = DINOv3ConvNextBackbone.from_pretrained(
-            "facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
+            "facebook/dinov3-convnext-large-pretrain-lvd1689m",
             out_indices=[1, 2, 3, 4]
         )
         # SMP needs to know the number of channels for each stage
         # These match ConvNeXt-Tiny output channels: [96, 192, 384, 768]
-        encoder_channels = [96, 192, 384, 768]
+        # encoder_channels = [96, 192, 384, 768]
+        encoder_channels = [192, 384, 768, 1536]  # For ConvNeXt-Large
         
         # 2. Use SMP's internal decoder
         decoder_channels = (256, 128, 64, 32)
@@ -88,6 +89,25 @@ class DINOv3MAnet(nn.Module):
             # This 1x1 conv does the final classification
             nn.Conv2d(64, num_classes, kernel_size=1)
         )
+
+    def get_encoder_parameters(self, stages=[2, 3]):
+        params = []
+        for name, param in self.encoder.named_parameters():
+            if any(f"stages.{stage}" in name for stage in stages):
+                params.append(param)
+        return params
+    
+    def unfreeze_encoder_stages(self, stages=[2, 3]):
+        params = self.get_encoder_parameters(stages)
+        for param in params:
+            param.requires_grad = True
+    
+    def get_decoder_parameters(self):
+        params = []
+        params.extend(list(self.decoder.parameters()))
+        params.extend(list(self.segmentation_head.parameters()))
+        return params
+
 
     def forward(self, x):
         features = self.encoder(x).feature_maps 

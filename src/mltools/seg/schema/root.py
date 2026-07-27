@@ -22,3 +22,4 @@ class TrainConfig:
     total_epochs: int
     class_name: str
     class_groups: list[ClassGroupConfig]
+    comment: str = "No comment"

@@ -9,3 +9,5 @@ experiments_yolo/
 **/*.pt
 runs
 slurm_logs
+secrets.env
+visualizations/

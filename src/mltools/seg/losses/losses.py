@@ -15,6 +15,7 @@ class SegLoss(torch.nn.Module):
         self.weight = start_weight
         self.labels_smoothing = labels_smoothing
         self.bce = torch.nn.BCEWithLogitsLoss()
+        # self.focal = smp.losses.FocalLoss(mode="binary", alpha=0.75, gamma=2.0)
         self.dice = smp.losses.DiceLoss(mode="binary")
 
     def update_weight(self, current_iter, total_iters):
@@ -23,5 +24,7 @@ class SegLoss(torch.nn.Module):
     def forward(self, inputs, targets):
         targets = targets * (1 - 2 * self.labels_smoothing) + self.labels_smoothing
         bce_loss = self.bce(inputs, targets)
+        # focal_loss = self.focal(inputs, targets)
         dice_loss = self.dice(inputs, targets)
+        # return self.weight * focal_loss + (1 - self.weight) * dice_loss
         return self.weight * bce_loss + (1 - self.weight) * dice_loss
