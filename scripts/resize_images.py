@@ -11,9 +11,9 @@ if __name__ == "__main__":
     images = list(input_dir.glob("*.JPG")) + list(input_dir.glob("*.jpg")) + list(input_dir.glob("*.png"))
     for image_path in tqdm.tqdm(images, desc="Resizing images", total=len(images)):
         image = cv2.imread(str(image_path))
-        # resize so the longest side is res pixels, keeping the aspect ratio
+        # resize so the shortest side is res pixels, keeping the aspect ratio
         h, w = image.shape[:2]
-        if h > w:
+        if h < w:
             new_h = res
             new_w = int(w * (res / h))
         else:
