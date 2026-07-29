@@ -96,7 +96,7 @@ class SegModule(L.LightningModule):
     
     def on_validation_epoch_start(self):
         # Skip validation for first 2 epochs
-        if self.current_epoch < 0:
+        if self.current_epoch < 3:
             self.should_validate = False
         else:
             self.should_validate = True

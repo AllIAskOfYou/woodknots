@@ -4,20 +4,19 @@ import tqdm
 
 if __name__ == "__main__":
     input_dir = Path("data/matching/raw")
-    res = 512
+    res = 1024
     output_dir = Path(f"data/matching/resized_{res}")
     output_dir.mkdir(exist_ok=True)
 
     images = list(input_dir.glob("*.JPG")) + list(input_dir.glob("*.jpg")) + list(input_dir.glob("*.png"))
     for image_path in tqdm.tqdm(images, desc="Resizing images", total=len(images)):
         image = cv2.imread(str(image_path))
-        # resize so the shortest side is res pixels, keeping the aspect ratio
-        h, w = image.shape[:2]
-        if h < w:
-            new_h = res
-            new_w = int(w * (res / h))
-        else:
-            new_w = res
-            new_h = int(h * (res / w))
-        resized_image = cv2.resize(image, (new_w, new_h))
-        cv2.imwrite(str(output_dir / image_path.name), resized_image)
+        # rotate the image if it's in portrait mode
+        if image.shape[0] > image.shape[1]:
+            image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+        # resize so that the width is res and the height is scaled accordingly
+        scale = res / image.shape[1]
+        new_height = int(image.shape[0] * scale)
+        resized_image = cv2.resize(image, (res, new_height), interpolation=cv2.INTER_LINEAR)
+        output_path = output_dir / image_path.name
+        cv2.imwrite(str(output_path), resized_image)
