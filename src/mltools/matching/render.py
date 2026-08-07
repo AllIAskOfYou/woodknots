@@ -1,262 +1,230 @@
-"""
-render.py
+import os
+os.environ['PYOPENGL_PLATFORM'] = 'glfw'  # Ensure GLFW is used for OpenGL context creation
 
-GPU-based mesh renderer (ModernGL) for mapping image pixels from a
-Meshroom camera view into 3D world space.
-
-The renderer takes a camera's intrinsic matrix K, rotation R, and
-camera center C (Meshroom / OpenCV convention: X_cam = R @ (X_world - C),
-with X right, Y down, Z forward) and rasterizes the mesh so that every
-pixel of the rendered output stores the *world-space 3D coordinate* of
-the surface point visible at that pixel from that camera.
-
-This gives you, for free:
-  - a per-pixel image -> 3D mapping (just index into "position")
-  - per-pixel depth (Euclidean distance from the camera center)
-  - correct occlusion handling (via the GPU depth test)
-"""
-
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Optional, Dict
-
-import moderngl
 import numpy as np
+import glfw
+from OpenGL.GL import *
 import trimesh
+from PIL import Image
+import matplotlib as mpl
 
+# ==========================================
+# 1. CUSTOM SHADER SOURCE CODE
+# ==========================================
+VERTEX_SHADER = """
+#version 330 core
+layout(location = 0) in vec3 in_position;
 
-_VERTEX_SHADER = """
-#version 330
+uniform mat4 u_projection;
+uniform mat4 u_view;
 
-uniform mat4 u_mvp;
-uniform mat4 u_model;
-
-in vec3 in_position;
-
-out vec3 v_world_pos;
+out vec3 frag_world_pos;
 
 void main() {
-    vec4 world = u_model * vec4(in_position, 1.0);
-    v_world_pos = world.xyz;
-    gl_Position = u_mvp * vec4(in_position, 1.0);
+    frag_world_pos = in_position;
+    gl_Position = u_projection * u_view * vec4(in_position, 1.0);
 }
 """
 
-_FRAGMENT_SHADER = """
-#version 330
-
-in vec3 v_world_pos;
-out vec4 out_position;
+FRAGMENT_SHADER = """
+#version 330 core
+in vec3 frag_world_pos;
+out vec4 out_color;
 
 void main() {
-    // rgb = world-space position of the visible surface point
-    // a   = 1.0 marks the pixel as "hit" (used downstream as a validity mask)
-    out_position = vec4(v_world_pos, 1.0);
+    out_color = vec4(frag_world_pos, 1.0);
 }
 """
 
-
-def _to_gl(matrix: np.ndarray) -> bytes:
-    """
-    Pack a numpy 4x4 matrix (used as M @ v, row-major) into the
-    column-major float32 byte layout GLSL's mat4 expects, while
-    preserving M @ v semantics inside the shader.
-    """
-    return np.ascontiguousarray(matrix.T, dtype="f4").tobytes()
-
-
-def intrinsics_to_gl_projection(
-    K: np.ndarray, width: int, height: int, near: float = 0.01, far: float = 1000.0
-) -> np.ndarray:
-    """
-    Build an OpenGL clip-space projection matrix directly from a pinhole
-    intrinsic matrix K (as produced by utils.parse_intrinsics), so it can
-    be applied to points already expressed in the OpenCV/Meshroom camera
-    convention (X right, Y down, Z forward). This avoids having to flip
-    the view/rotation matrix -- the Y-flip is baked into the projection.
-
-    Derived so that clip_w = +Z (positive for points in front of the
-    camera, as they must be for OpenGL's homogeneous clipping -- a
-    negative clip_w silently mangles/clips valid geometry).
-
-    Assumes K is not skewed and uses the standard pinhole form:
-        K = [[fx, 0, cx],
-             [0, fy, cy],
-             [0,  0,  1]]
-    """
-    fx, fy = float(K[0, 0]), float(K[1, 1])
-    cx, cy = float(K[0, 2]), float(K[1, 2])
-
-    proj = np.zeros((4, 4), dtype=np.float64)
-    proj[0, 0] = 2.0 * fx / width
-    proj[0, 2] = 2.0 * cx / width - 1.0
-    proj[1, 1] = -2.0 * fy / height          # flip Y: image-down -> NDC-up
-    proj[1, 2] = 1.0 - 2.0 * cy / height
-    proj[2, 2] = (far + near) / (far - near)
-    proj[2, 3] = -2.0 * far * near / (far - near)
-    proj[3, 2] = 1.0
-    return proj
-
-
-def pose_to_gl_view(R: np.ndarray, C: np.ndarray) -> np.ndarray:
-    """
-    Build the 4x4 world -> camera matrix from a Meshroom pose:
-
-        X_cam = R @ (X_world - C) = R @ X_world + (-R @ C)
-    """
-    t = -R @ C
-    V = np.eye(4, dtype=np.float64)
-    V[:3, :3] = R
-    V[:3, 3] = t
-    return V
-
-
+# ==========================================
+# 2. MESH RENDERER CLASS
+# ==========================================
 class MeshRenderer:
-    """
-    Loads an .obj mesh onto the GPU with ModernGL and renders it from
-    arbitrary Meshroom camera poses, producing the world-space 3D
-    position visible at every pixel.
-    """
+    def __init__(self, obj_path, default_width=800, default_height=600):
+        if not glfw.init():
+            raise RuntimeError("Failed to initialize GLFW")
+        
+        glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+        
+        self.width = default_width
+        self.height = default_height
+        
+        self.window = glfw.create_window(self.width, self.height, "Offscreen Renderer", None, None)
+        if not self.window:
+            glfw.terminate()
+            raise RuntimeError("Failed to create GLFW window")
+            
+        glfw.make_context_current(self.window)
+        
+        # Load mesh once
+        mesh = trimesh.load(obj_path, process=True)
+        if isinstance(mesh, trimesh.Scene):
+            mesh = mesh.dump(concatenate=True)
+            
+        vertices = mesh.vertices[mesh.faces].reshape(-1, 3).astype(np.float32)
+        self.vertex_count = len(vertices)
 
-    def __init__(self, obj_path: str | Path, ctx: Optional["moderngl.Context"] = None):
-        self.obj_path = Path(obj_path)
-        if not self.obj_path.exists():
-            raise FileNotFoundError(f"Mesh not found at: {self.obj_path}")
+        # OpenGL Context Setup
+        glEnable(GL_DEPTH_TEST)
+        glClearColor(0.0, 0.0, 0.0, 0.0)
 
-        # A standalone (headless/offscreen) context. If this fails on your
-        # machine, you likely need an EGL-capable GPU driver, or to run
-        # under `xvfb-run` / with an OSMesa-enabled moderngl build.
-        self.ctx = ctx or moderngl.create_standalone_context(require=330)
-        self.ctx.enable(moderngl.DEPTH_TEST)
+        # Compile Shaders and Setup Buffers once
+        self.shader_program = self._create_shader_program(VERTEX_SHADER, FRAGMENT_SHADER)
+        glUseProgram(self.shader_program)
 
-        self.program = self.ctx.program(
-            vertex_shader=_VERTEX_SHADER, fragment_shader=_FRAGMENT_SHADER
-        )
+        self.vao = glGenVertexArrays(1)
+        self.vbo = glGenBuffers(1)
+        
+        glBindVertexArray(self.vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+        
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * vertices.itemsize, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(0)
 
-        self._load_mesh()
+        # Matplotlib colormap setup
+        self.colormap = mpl.colormaps['viridis']
 
-        # framebuffer is (re)created lazily to match the requested output size
-        self._fbo_size = None
-        self._fbo = None
-        self._color_tex = None
-        self._depth_rbo = None
+    def _compile_shader(self, shader_type, source):
+        shader = glCreateShader(shader_type)
+        glShaderSource(shader, source)
+        glCompileShader(shader)
+        if not glGetShaderiv(shader, GL_COMPILE_STATUS):
+            raise RuntimeError(f"Shader compilation error: {glGetShaderInfoLog(shader).decode()}")
+        return shader
 
-    # ------------------------------------------------------------------ #
-    # setup
-    # ------------------------------------------------------------------ #
-    def _load_mesh(self) -> None:
-        mesh = trimesh.load(self.obj_path, process=False, force="mesh")
+    def _create_shader_program(self, vs_source, fs_source):
+        vs = self._compile_shader(GL_VERTEX_SHADER, vs_source)
+        fs = self._compile_shader(GL_FRAGMENT_SHADER, fs_source)
+        program = glCreateProgram()
+        glAttachShader(program, vs)
+        glAttachShader(program, fs)
+        glLinkProgram(program)
+        if not glGetProgramiv(program, GL_LINK_STATUS):
+            raise RuntimeError(f"Program linking error: {glGetProgramInfoLog(program).decode()}")
+        glDeleteShader(vs)
+        glDeleteShader(fs)
+        return program
 
-        vertices = np.asarray(mesh.vertices, dtype="f4")
-        faces = np.asarray(mesh.faces, dtype="i4")
-
-        self.bounds = mesh.bounds  # (2, 3) min/max -- handy for picking near/far
-        self.n_vertices = len(vertices)
-        self.n_faces = len(faces)
-
-        vbo = self.ctx.buffer(vertices.tobytes())
-        ibo = self.ctx.buffer(faces.tobytes())
-
-        self.vao = self.ctx.vertex_array(
-            self.program, [(vbo, "3f", "in_position")], ibo
-        )
-
-    def _ensure_framebuffer(self, width: int, height: int) -> None:
-        if self._fbo_size == (width, height):
-            return
-
-        if self._fbo is not None:
-            self._fbo.release()
-            self._color_tex.release()
-            self._depth_rbo.release()
-
-        # RGBA32F: rgb = world position, a = hit mask (1.0 where mesh drawn)
-        self._color_tex = self.ctx.texture((width, height), 4, dtype="f4")
-        self._depth_rbo = self.ctx.depth_renderbuffer((width, height))
-        self._fbo = self.ctx.framebuffer(
-            color_attachments=[self._color_tex], depth_attachment=self._depth_rbo
-        )
-        self._fbo_size = (width, height)
-
-    # ------------------------------------------------------------------ #
-    # rendering
-    # ------------------------------------------------------------------ #
-    def render(
-        self,
-        K: np.ndarray,
-        R: np.ndarray,
-        C: np.ndarray,
-        width: int,
-        height: int,
-        near: float = 0.01,
-        far: float = 1000.0,
-        model: Optional[np.ndarray] = None,
-        cull_back_faces: bool = False,
-    ) -> Dict[str, np.ndarray]:
+    def _get_projection_matrix(self, focal_length, width, height, sensor_width, sensor_height, cx=0.0, cy=0.0, near=0.1, far=100.0):
         """
-        Render the mesh from the given Meshroom camera (K, R, C) at the
-        given output resolution (should generally match the source
-        image's width/height so pixel (u, v) in the photo lines up with
-        pixel (u, v) of the result).
-
-        Returns:
-            {
-              "position": (H, W, 3) float32 world-space XYZ per pixel,
-              "mask":     (H, W) bool, True where the mesh was hit,
-            }
+        Computes an asymmetric OpenGL perspective projection matrix incorporating 
+        principal point offsets (cx, cy) measured from the image center in pixels.
         """
-        self._ensure_framebuffer(width, height)
-        model = np.eye(4, dtype=np.float64) if model is None else model
+        # Physical size scaling factor for pixels to physical units on the sensor
+        dx = sensor_width / width
+        dy = sensor_height / height
+        
+        # Standard symmetric frustum bounds at the near plane
+        xmin = -0.5 * sensor_width * (near / focal_length)
+        xmax =  0.5 * sensor_width * (near / focal_length)
+        ymin = -0.5 * sensor_height * (near / focal_length)
+        ymax =  0.5 * sensor_height * (near / focal_length)
+        
+        # Convert pixel offsets from center into camera/sensor space units
+        # Note: If your cx/cy positive Y points down in your dataset, change to -cy * dy * ...
+        x_offset = cx * dx * (near / focal_length)
+        y_offset = cy * dy * (near / focal_length)
+        
+        # Shift frustum boundaries accordingly (asymmetric frustum)
+        left   = xmin + x_offset
+        right  = xmax + x_offset
+        bottom = ymin + y_offset
+        top    = ymax + y_offset
+        
+        # Construct standard asymmetric OpenGL frustum matrix
+        proj = np.zeros((4, 4), dtype=np.float32)
+        proj[0, 0] = (2.0 * near) / (right - left)
+        proj[1, 1] = (2.0 * near) / (top - bottom)
+        
+        proj[0, 2] = (right + left) / (right - left)
+        proj[1, 2] = (top + bottom) / (top - bottom)
+        
+        proj[2, 2] = -(far + near) / (far - near)
+        proj[2, 3] = -(2.0 * far * near) / (far - near)
+        proj[3, 2] = -1.0
+        
+        return proj.T
 
-        if cull_back_faces:
-            self.ctx.enable(moderngl.CULL_FACE)
-        else:
-            self.ctx.disable(moderngl.CULL_FACE)
+    def _get_view_matrix(self, position, rotation_matrix):
+        R_cw = np.array(rotation_matrix, dtype=np.float32)[:3, :3]
+        t = np.array(position, dtype=np.float32)
+        
+        R_wc = R_cw.T
+        t_cam = -np.dot(R_wc, t)
+        
+        view_matrix = np.identity(4, dtype=np.float32)
+        view_matrix[:3, :3] = R_wc
+        view_matrix[:3, 3] = t_cam
+        return view_matrix.T
 
-        view = pose_to_gl_view(R, C)
-        proj = intrinsics_to_gl_projection(K, width, height, near, far)
-        mvp = proj @ view @ model
+    def render(self, cam_params):
+        """Renders the loaded mesh from a specific camera configuration."""
+        glfw.make_context_current(self.window)
+        
+        w = cam_params.get('width', self.width)
+        h = cam_params.get('height', self.height)
+        
+        glViewport(0, 0, w, h)
+        glUseProgram(self.shader_program)
+        glBindVertexArray(self.vao)
 
-        self.program["u_mvp"].write(_to_gl(mvp))
-        self.program["u_model"].write(_to_gl(model))
+        # Compute matrices for this specific camera
+        proj_matrix = self._get_projection_matrix(
+            cam_params['focal_length'],
+            cam_params['width'],
+            cam_params['height'],
+            cam_params['sensor_width'],
+            cam_params['sensor_height'],
+            cam_params['cx'],
+            cam_params['cy']
+        )
+        view_matrix = self._get_view_matrix(cam_params['position'], cam_params['rotation_matrix'])
+        
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "u_projection"), 1, GL_FALSE, proj_matrix)
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "u_view"), 1, GL_FALSE, view_matrix)
 
-        self._fbo.use()
-        self.ctx.viewport = (0, 0, width, height)
-        self._fbo.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
-        self.vao.render(moderngl.TRIANGLES)
+        # Draw frame
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
 
-        raw = self._color_tex.read(alignment=1)
-        buf = np.frombuffer(raw, dtype="f4").reshape(height, width, 4)
-        # OpenGL reads back with origin at bottom-left; flip to the usual
-        # top-left image convention used by the source photos.
-        buf = np.flipud(buf).copy()
+        # Read back pixels
+        glPixelStorei(GL_PACK_ALIGNMENT, 1)
+        pixel_data = glReadPixels(0, 0, w, h, GL_RGBA, GL_FLOAT)
+        
+        pixel_array = np.frombuffer(pixel_data, dtype=np.float32).reshape((h, w, 4))
+        pixel_array = np.flip(pixel_array, axis=0)
 
-        position = buf[..., :3]
-        mask = buf[..., 3] > 0.5
+        return pixel_array
 
-        return {"position": position, "mask": mask}
+    def visualize_depth(self, output_png_path, cam_params):
+        pixel_array = self.render(cam_params)
+        world_pos_map = pixel_array[..., :3]
+        valid_mask = pixel_array[..., 3] > 0.5
 
-    def unproject_pixel(
-        self, u: int, v: int, render_result: Dict[str, np.ndarray]
-    ) -> Optional[np.ndarray]:
-        """Convenience accessor: world-space 3D point for pixel (u, v)
-        in a previous render() result, or None if the mesh wasn't hit."""
-        if not render_result["mask"][v, u]:
-            return None
-        return render_result["position"][v, u]
+        # Compute depth relative to camera center
+        cam_pos = np.array(cam_params['position'], dtype=np.float32)
+        distance_map = np.linalg.norm(world_pos_map - cam_pos, axis=-1)
 
-    def release(self) -> None:
-        self.vao.release()
-        if self._fbo is not None:
-            self._fbo.release()
-            self._color_tex.release()
-            self._depth_rbo.release()
-        self.program.release()
+        min_dist = distance_map[valid_mask].min() if np.any(valid_mask) else 0.0
+        max_dist = distance_map[valid_mask].max() if np.any(valid_mask) else 1.0
+        normalized_depth = np.clip((distance_map - min_dist) / (max_dist - min_dist), 0.0, 1.0)
 
-    # context manager convenience
-    def __enter__(self) -> "MeshRenderer":
-        return self
+        colored_depth = self.colormap(1 - normalized_depth)
+        colored_depth[~valid_mask] = [0.0, 0.0, 0.0, 1.0]
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.release()
+        final_img_uint8 = (colored_depth * 255).astype(np.uint8)
+        image = Image.fromarray(final_img_uint8, mode="RGBA")
+        image.save(output_png_path)
+        print(f"Render successfully saved to {output_png_path}")
+
+    def close(self):
+        """Cleans up GPU buffers, program, and window."""
+        glDeleteBuffers(1, [self.vbo])
+        glDeleteVertexArrays(1, [self.vao])
+        glDeleteProgram(self.shader_program)
+        glfw.destroy_window(self.window)
+        glfw.terminate()
