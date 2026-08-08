@@ -13,34 +13,18 @@ if __name__ == "__main__":
     # Initialize the renderer once
     renderer = MeshRenderer(obj_path, default_width=1024, default_height=682)
     output_dir = "data/matching/vis"
-    
-    for image_id, camera in list(cameras.items())[:5]:
-        output_filename = f"{output_dir}/depth_{image_id}.png"
-        renderer.visualize_depth(output_filename, camera)
-    
-    rotation_matrix = [
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [0.0, 1.0, 0.0]
-    ]
 
-    # Define multiple camera perspectives
-    camera_parameters = {
-        'position': [0.0, 1.5, 0.0],
-        'rotation_matrix': rotation_matrix,
-        'focal_length': 35.0,
-        'sensor_width': 36.0,
-        'sensor_height': 24.0,
-        'width': 300,
-        'height': 300,
-        'cx': 0.0,
-        'cy': 0.0,
-        'distortion_params': np.array([0.0, 0.0, 0.0], dtype=np.float32)  # No distortion
-    }
+    print(f"Rendering depth maps for {len(cameras)} cameras...")
+    for image_id, camera in list(cameras.items()):
+        # if image_id != "2037":
+        #     continue
+        render = renderer.render(camera)
+        valid_pixels = render[render[..., 3] > 0.5]
+        # count number of axis with at least one non-zero value
+        is_zero = np.all(valid_pixels[:, :3] == 0, axis=0)
+        print(f"{image_id}: 0 axis: {is_zero}")
 
-    try:
-        output_filename = f"data/matching/depth_visualization.png"
-        renderer.render(output_filename, camera_parameters)
-    finally:
-        # Always clean up resources safely when done
-        renderer.close()
+        # output_filename = f"{output_dir}/depth_{image_id}.png"
+        # renderer.visualize_depth(camera, output_filename)
+    
+    renderer.close()

@@ -37,6 +37,8 @@ dependencies = [
     "numpy>=2.4.6",
     "pillow>=12.2.0",
     "pyrr>=0.10.3",
+    "imgui[glfw]>=2.0.0",
+    "imgui-bundle>=1.92.801",
 ]
 
 [build-system]
