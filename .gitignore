@@ -11,3 +11,4 @@ runs
 slurm_logs
 secrets.env
 visualizations/
+imgui.ini

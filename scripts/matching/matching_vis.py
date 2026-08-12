@@ -1,5 +1,6 @@
 import sys
 import os
+import ctypes
 import numpy as np
 
 # Set platform before importing OpenGL
@@ -13,6 +14,8 @@ from PIL import Image
 
 from imgui_bundle import imgui
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
+
+from mltools.matching.volume import VoxelGrid
 
 # ==========================================
 # SHADERS
@@ -46,17 +49,22 @@ void main() {
 }
 """
 
+# Sphere shader now takes a per-instance color (location 2) in addition to
+# the per-instance center (location 0) and the shared quad offset (location 1).
 SPHERE_VERTEX_SHADER = """
 #version 330 core
 layout(location = 0) in vec3 a_center;
 layout(location = 1) in vec2 a_quad_offset;
+layout(location = 2) in vec3 a_color;
 uniform mat4 projection;
 uniform mat4 view;
 uniform mat4 model;
 uniform float u_sphere_radius;
 out vec2 v_uv;
+out vec3 v_color;
 void main() {
     v_uv = a_quad_offset + 0.5;
+    v_color = a_color;
     vec3 camera_right = vec3(view[0][0], view[1][0], view[2][0]);
     vec3 camera_up    = vec3(view[0][1], view[1][1], view[2][1]);
     vec3 world_position = a_center 
@@ -69,12 +77,13 @@ void main() {
 SPHERE_FRAGMENT_SHADER = """
 #version 330 core
 in vec2 v_uv;
+in vec3 v_color;
 out vec4 fragColor;
 void main() {
     vec2 coord = v_uv * 2.0 - 1.0;
     float dist = dot(coord, coord);
     if (dist > 1.0) { discard; }
-    fragColor = vec4(1.0, 0.3, 0.3, 1.0);
+    fragColor = vec4(v_color, 1.0);
 }
 """
 
@@ -174,9 +183,39 @@ def load_obj_mtl(filepath):
 # APPLICATION
 # ==========================================
 class App:
-    def __init__(self, obj_path, points_array):
+    def __init__(self, obj_path, points_array, ids_array, color_palette):
+        """
+        obj_path:       path to the .obj mesh to display.
+        points_array:   (N, 3) array of sphere centers.
+        ids_array:      (N,) array of integer ids, one per point. An id's
+                         color is looked up in color_palette by
+                         `id % len(color_palette)`, so ids can be arbitrary
+                         non-negative integers (e.g. structure/group ids)
+                         and will simply wrap around the palette.
+        color_palette:  (K, 3) array of RGB colors in [0, 1] (or [0, 255],
+                         auto-detected and normalized below).
+        """
         self.obj_path = obj_path
         self.points = np.array(points_array, dtype=np.float32)
+
+        ids_array = np.asarray(ids_array)
+        if len(ids_array) != len(self.points):
+            raise ValueError(
+                f"ids_array length ({len(ids_array)}) must match "
+                f"points_array length ({len(self.points)})"
+            )
+
+        palette = np.array(color_palette, dtype=np.float32)
+        if palette.ndim != 2 or palette.shape[1] != 3 or len(palette) == 0:
+            raise ValueError("color_palette must be a non-empty (K, 3) array of RGB colors")
+        # Accept palettes given in [0, 255] as well as [0, 1].
+        if palette.max() > 1.0:
+            palette = palette / 255.0
+
+        # Modulo-index into the palette per point, computed once up front.
+        palette_indices = ids_array.astype(np.int64) % len(palette)
+        self.colors = palette[palette_indices].astype(np.float32)
+
         self.cam_dist = 5.0
         self.cam_yaw = 45.0
         self.cam_pitch = -30.0
@@ -347,18 +386,29 @@ class App:
         quad_vertices = np.array([-0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5], dtype=np.float32)
         self.sphere_vao = glGenVertexArrays(1)
         glBindVertexArray(self.sphere_vao)
+
+        # Shared per-vertex quad offset (location 1), not instanced.
         quad_vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, quad_vbo)
         glBufferData(GL_ARRAY_BUFFER, quad_vertices.nbytes, quad_vertices, GL_STATIC_DRAW)
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 2 * 4, ctypes.c_void_p(0))
         glEnableVertexAttribArray(1)
 
+        # Per-instance center (location 0).
         instance_vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
         glBufferData(GL_ARRAY_BUFFER, self.points.nbytes, self.points, GL_STATIC_DRAW)
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * 4, ctypes.c_void_p(0))
         glEnableVertexAttribArray(0)
         glVertexAttribDivisor(0, 1)
+
+        # Per-instance color (location 2), looked up from ids_array % palette in __init__.
+        color_vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, color_vbo)
+        glBufferData(GL_ARRAY_BUFFER, self.colors.nbytes, self.colors, GL_STATIC_DRAW)
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * 4, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(2)
+        glVertexAttribDivisor(2, 1)
 
     def render(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -399,29 +449,30 @@ class App:
         glBindVertexArray(self.sphere_vao)
         glDrawArraysInstanced(GL_TRIANGLES, 0, 6, len(self.points))
 
+from mltools.matching.utils import parse_coco_annotations, construct_voxel_grid
 if __name__ == "__main__":
     obj_filename = sys.argv[1] if len(sys.argv) > 1 else "data/matching/textured_mesh/texturedMesh.obj"
-    mask_filename = "data/matching/resized_1024_mask/2037.png"
-    pixel_data_filename = "data/matching/resized_1024_3d/2037.npy"
-    if not os.path.exists(mask_filename) or not os.path.exists(pixel_data_filename):
-        print(f"Required files not found: {mask_filename} or {pixel_data_filename}")
-        sys.exit(1)
-    image_mask = np.array(Image.open(mask_filename).convert("L")) > 0
-    pixel_data = np.load(pixel_data_filename)
-    # subsample
-    image_mask = image_mask[::4, ::4]
-    pixel_data = pixel_data[::4, ::4, :]
-    positions = pixel_data[..., :3]
-    valid_mask = pixel_data[..., 3] > 0.5
-    combined_mask = np.logical_and(image_mask, valid_mask)
-    valid_positions = positions[combined_mask]
-    print(f"Loaded with shape {valid_positions.shape}")
-    unique_positions = np.unique(valid_positions, axis=0)
-    
-    print(f"Unique valid positions: {unique_positions.shape[0]}")
-
-    # dummy_points = np.random.uniform(low=-1.5, high=1.5, size=(100, 3))
+    ann_filename = "data/matching/annotations/instances_default.json"
+    projections_dir = "data/matching/resized_1024_3d"
+    voxel_size = 0.005
+    annotations = parse_coco_annotations(ann_filename)
+    vg = construct_voxel_grid(annotations, projections_dir, voxel_size)
+    structures = vg.find_structures(merge_threshold=0.2)
+    print(len(vg.volumes), "volumes found in voxel grid.")
+    for i, vol in enumerate(vg.volumes):
+        print(f"Volume {i}: {len(vol)} voxels")
+    # vol_voxels, vol_indexes = vg.visualize_volumes()
+    # vol_voxels, vol_indexes = vg.visualize_volume(2)
+    vol_voxels, vol_indexes = vg.visualize_structures(structures)
+    # print("Volume voxels shape:", vol_voxels.shape)
+    # print(vol_voxels, vol_indexes)
+    color_palette = [
+        [255, 0, 0], [0, 255, 0], [0, 0, 255],
+        [255, 255, 0], [255, 0, 255], [0, 255, 255],
+        [255, 255, 255], [0, 0, 0], [128, 128, 128],
+        [255, 105, 180], [75, 0, 130], [255, 140, 0]
+    ]
     if not os.path.exists(obj_filename):
         print(f"Usage: python app.py model.obj")
         sys.exit(1)
-    App(obj_filename, unique_positions).run()
+    App(obj_filename, vol_voxels, vol_indexes, color_palette).run()

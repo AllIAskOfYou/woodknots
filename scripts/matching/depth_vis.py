@@ -18,13 +18,13 @@ if __name__ == "__main__":
     for image_id, camera in list(cameras.items()):
         # if image_id != "2037":
         #     continue
-        render = renderer.render(camera)
-        valid_pixels = render[render[..., 3] > 0.5]
-        # count number of axis with at least one non-zero value
-        is_zero = np.all(valid_pixels[:, :3] == 0, axis=0)
-        print(f"{image_id}: 0 axis: {is_zero}")
+        # render = renderer.render(camera)
+        # valid_pixels = render[render[..., 3] > 0.5]
+        # # count number of axis with at least one non-zero value
+        # is_zero = np.all(valid_pixels[:, :3] == 0, axis=0)
+        # print(f"{image_id}: 0 axis: {is_zero}")
 
-        # output_filename = f"{output_dir}/depth_{image_id}.png"
-        # renderer.visualize_depth(camera, output_filename)
+        output_filename = f"{output_dir}/depth_{image_id}.png"
+        renderer.visualize_depth(camera, output_png_path=output_filename)
     
     renderer.close()

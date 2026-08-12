@@ -6,9 +6,9 @@ from mltools.matching.render import MeshRenderer
 from mltools.matching.utils import MeshroomCamerasParser
 
 if __name__ == "__main__":
-    cameras_path = "data/matching/meshroom/cameras.sfm"
-    obj_path = "data/matching/textured_mesh/texturedMesh.obj"
-    output_dir = "data/matching/resized_1024_3d"
+    cameras_path = "data/matching/cameras/cameras_v2.sfm"
+    obj_path = "data/matching/textured_mesh_v2/texturedMesh.obj"
+    output_dir = "data/matching/resized_1024_3d_v2"
     os.makedirs(output_dir, exist_ok=True)
 
     cameras = MeshroomCamerasParser(cameras_path).parse()
