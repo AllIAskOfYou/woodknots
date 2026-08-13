@@ -32,8 +32,8 @@ class MeshroomCamerasParser:
                 "sensor_width": float(item["sensorWidth"]),
                 "sensor_height": float(item["sensorHeight"]),
                 "focal_length": float(item["focalLength"]),
-                "cx": float(pp[0]),
-                "cy": float(pp[1]),
+                "cx": float(pp[1]),
+                "cy": -float(pp[0]),
                 "distortion_params": np.array(item["distortionParams"], dtype=np.float32)
             }
         return intrinsics
@@ -75,8 +75,8 @@ class MeshroomCamerasParser:
                 "sensor_height": intrinsic["sensor_height"],
                 "width": intrinsic["width"],
                 "height": intrinsic["height"],
-                "cx": 2*intrinsic["cy"],
-                "cy": -2*intrinsic["cx"],
+                "cx": intrinsic["cx"],
+                "cy": intrinsic["cy"],
                 "distortion_params": intrinsic["distortion_params"]
             }
         return cameras
