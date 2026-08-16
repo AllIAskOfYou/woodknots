@@ -201,24 +201,90 @@ class MeshRenderer:
         self.fbo_post = glGenFramebuffers(1)
         self.post_tex = glGenTextures(1)
 
-        self._fbo_size = (0, 0)  # force allocation on first render()
-        self._allocate_fbo_storage(self.width, self.height)
+        self._fbo_size = (0, 0)
+        self._fbo_new_size = (0, 0)
+        # self._allocate_fbo_storage({}, self.width, self.height)
 
-    def _allocate_fbo_storage(self, w, h):
+    def _find_undistorted_res(self, cam_params, w, h):
+        def convert_params_to_pixels(cam_params, w, h):
+            dx = cam_params['sensor_width'] / w
+            dy = cam_params['sensor_height'] / h
+            fx = cam_params['focal_length'] / dx
+            fy = cam_params['focal_length'] / dy
+            cx_px = w / 2.0 + cam_params['cx']
+            cy_px = h / 2.0 + cam_params['cy']
+            return np.array([fx, fy], dtype=np.float32), np.array([cx_px, cy_px], dtype=np.float32)
+        
+        def img2cam(px, pp_px, f_px):
+            return (px - pp_px) / f_px
+
+        def cam2img(cam, pp_px, f_px):
+            return cam * f_px + pp_px
+
+        def undistort_cam_coords(cam_coords, distortion_params):
+            k1, k2, k3 = distortion_params
+            new_coords = cam_coords.copy()
+            for i in range(10):
+                r2 = np.sum(cam_coords**2, axis=-1, keepdims=True)
+                r4 = r2**2
+                r6 = r4 * r2
+                factor = 1 + k1 * r2 + k2 * r4 + k3 * r6
+                factor = np.maximum(factor, 1e-4)  # Avoid division by zero or negative factors
+                new_coords = cam_coords / factor
+
+            return new_coords
+
+        f_px, pp_px = convert_params_to_pixels(cam_params, w, h)
+        w_indices = np.arange(w)
+        h_indices = np.arange(h)
+        top_border = np.array([w_indices, np.zeros_like(w_indices)], dtype=np.float32).T
+        bottom_border = np.array([w_indices, np.full_like(w_indices, h - 1)], dtype=np.float32).T
+        left_border = np.array([np.zeros_like(h_indices), h_indices], dtype=np.float32).T
+        right_border = np.array([np.full_like(h_indices, w - 1), h_indices], dtype=np.float32).T
+        border_pixels = np.concatenate([top_border, bottom_border, left_border, right_border], axis=0)
+
+        cam_coords = img2cam(border_pixels, pp_px, f_px)
+        undistorted_cam_coords = undistort_cam_coords(cam_coords, cam_params['distortion_params'])
+        undistorted_pixels = cam2img(undistorted_cam_coords, pp_px, f_px)
+        bb = np.array([undistorted_pixels.min(axis=0), undistorted_pixels.max(axis=0)], dtype=np.float32)
+        w_pre = int(np.ceil(bb[1, 0] - bb[0, 0]))
+        h_pre = int(np.ceil(bb[1, 1] - bb[0, 1]))
+        w_pre = w + int((w_pre - w) * 1.2)
+        h_pre = h + int((h_pre - h) * 1.2)
+        return w_pre, h_pre
+
+    def _update_cam_params(self, cam_params, w_pre, h_pre):
+        cam_params['sensor_width'] *= (w_pre / cam_params['width'])
+        cam_params['sensor_height'] *= (h_pre / cam_params['height'])
+        cam_params['width'] = w_pre
+        cam_params['height'] = h_pre
+
+    def _allocate_fbo_storage(self, cam_params, w, h):
         """(Re)allocate both FBOs' attachments for size (w, h)."""
         if self._fbo_size == (w, h):
+            w_pre, h_pre = self._fbo_new_size
+            self._update_cam_params(cam_params, w_pre, h_pre)
             return
+
+        if cam_params.get('distortion_params') is None:
+            w_pre, h_pre = w, h
+        else:
+            w_pre, h_pre = self._find_undistorted_res(cam_params, w, h)
+            self._fbo_new_size = (w_pre, h_pre)
+            print(f"Undistorted FBO size: {w_pre}x{h_pre} for requested {w}x{h}")
+            self._update_cam_params(cam_params, w_pre, h_pre)
+
 
         # --- fbo_scene: color (float) + depth ---
         glBindTexture(GL_TEXTURE_2D, self.scene_tex)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, None)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w_pre, h_pre, 0, GL_RGBA, GL_FLOAT, None)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
 
         glBindRenderbuffer(GL_RENDERBUFFER, self.depth_rbo)
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h)
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w_pre, h_pre)
 
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo_scene)
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, self.scene_tex, 0)
@@ -231,7 +297,7 @@ class MeshRenderer:
 
         # --- fbo_post: color (float) only, no depth needed for a 2D resample ---
         glBindTexture(GL_TEXTURE_2D, self.post_tex)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, None)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w_pre, h_pre, 0, GL_RGBA, GL_FLOAT, None)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
@@ -400,11 +466,12 @@ class MeshRenderer:
         """
         glfw.make_context_current(self.window)
 
-        w = cam_params.get('width', self.width)
-        h = cam_params.get('height', self.height)
-
         # Resize both FBOs' attachments if this call uses a different resolution.
-        self._allocate_fbo_storage(w, h)
+        w_final = cam_params.get('width', self.width)
+        h_final = cam_params.get('height', self.height)
+        self._allocate_fbo_storage(cam_params, w_final, h_final)
+
+        w, h = self._fbo_new_size
 
         # Pass 1: standard linear MVP render (undistorted) -> fbo_scene.
         self._render_scene_pass(cam_params, w, h)
@@ -420,6 +487,11 @@ class MeshRenderer:
 
         pixel_array = np.frombuffer(pixel_data, dtype=np.float32).reshape((h, w, 4))
         pixel_array = np.flip(pixel_array, axis=0)
+
+        # Trim to the original resolution
+        pad_x, pad_y = (w - w_final) // 2, (h - h_final) // 2
+        print(f"Trimming pixel array from {w}x{h} to {w_final}x{h_final} with padding ({pad_x}, {pad_y})")
+        pixel_array = pixel_array[pad_y:pad_y+h_final, pad_x:pad_x+w_final]
 
         return pixel_array
 

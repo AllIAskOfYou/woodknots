@@ -19,8 +19,6 @@ if __name__ == "__main__":
     renderer = MeshRenderer(obj_path, default_width=w, default_height=h)
     
     for image_id, camera in tqdm.tqdm(list(cameras.items())):
-        if image_id != "2041":
-            continue
         pos = renderer.render(camera)
         pixel_data_file = f"{output_dir}/{image_id}.npy"
         np.save(pixel_data_file, pos)

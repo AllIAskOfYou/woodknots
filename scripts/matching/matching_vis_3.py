@@ -916,7 +916,7 @@ if __name__ == "__main__":
     # obj_filename = "data/matching/textured_mesh/texturedMesh.obj"
     # projections_dir = "data/matching/resized_1024_3d"
     obj_filename = "data/matching/textured_mesh_v2/texturedMesh.obj"
-    projections_dir = "data/matching/resized_1024_3d_v2"
+    projections_dir = "data/matching/resized_1024_3d_v3_distortion"
     ann_filename = "data/matching/annotations/instances_default.json"
     images_dir = "data/matching/resized_1024"
     corrections_file = "data/matching/annotations/corrections.json"
