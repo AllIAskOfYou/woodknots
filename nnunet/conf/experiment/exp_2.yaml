@@ -1,0 +1,6 @@
+# @package _global_
+experiment:
+  name: exp_2
+  fold: ???
+dataset:
+  resolution: 1024

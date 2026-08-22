@@ -7,7 +7,7 @@ from mltools import PROCESSED_DIR
 from .coco2custom import COCO2CustomConvertor
 from mltools import METADATA_DIR
 from mltools.seg.schema import DatasetConfig
-from mltools.utils.data import split_k_fold_by_groups
+from mltools.common.data import split_k_fold_by_groups
 
 
 def get_dataset_by_config(cfg: DatasetConfig):

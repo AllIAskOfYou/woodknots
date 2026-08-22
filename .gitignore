@@ -3,6 +3,7 @@ data/
 .venv/
 **/__pycache__/
 **/*.egg-info
+__SC
 experiments/
 experiments_yolo/
 **/*code-workspace

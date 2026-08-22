@@ -1,0 +1,18 @@
+defaults:
+  - env: local
+  - dataset: woodknots
+  - experiment: ???
+  - _self_
+
+
+framework: "nnunet"
+time: ${now:%Y-%m-%d_%H-%M-%S}
+
+
+hydra:
+  searchpath:
+    - file://${oc.env:PROJECT_ROOT}/common/conf
+  run:
+    dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
+  job:
+    chdir: false

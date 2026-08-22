@@ -1,0 +1,4 @@
+# @package paths
+project_root: /workspace
+data_root: ${paths.project_root}/data
+results_root: ${paths.project_root}/results

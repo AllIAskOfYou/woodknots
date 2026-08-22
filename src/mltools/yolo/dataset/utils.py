@@ -13,9 +13,8 @@ import tqdm
 import yaml
 
 from mltools import RAW_DIR, PROCESSED_YOLO_DIR
-from mltools.utils.data import get_fold
+from mltools.common.data import get_fold
 from mltools.yolo.schema import LabelConfig, ImageConfig, FoldConfig, DatasetConfig
-
 
 CONF_MAP = {0.2: "low", 0.6: "medium", 1.0: "high"}
 
@@ -40,10 +39,8 @@ def get_class_names(cfg: LabelConfig):
     else:
         for val in cfg.wood_knot:
             if val not in CONF_MAP:
-                raise ValueError(
-                    f"Wood knot confidence value {val} is not valid.\n\
-                        Must be one of {list(CONF_MAP.keys())}."
-                )
+                raise ValueError(f"Wood knot confidence value {val} is not valid.\n\
+                        Must be one of {list(CONF_MAP.keys())}.")
             cat_name = CONF_MAP[val]
             names.append(f"wood_knot_{cat_name}")
     if cfg.primary_log:

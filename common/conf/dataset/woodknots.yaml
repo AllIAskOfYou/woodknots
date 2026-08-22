@@ -1,0 +1,9 @@
+name: woodknots
+hf_repo_id: "Elercast/WoodKnots-600"
+hf_revision: "v1.0"
+data_root: ${paths.data_root}
+folds:
+  file_path: ${paths.project_root}/common/data_splits/split_k5_s42.json
+  k: 5
+class_names: ["wood_knot"] # ["primary_log", "wood_knot"]
+resolution: ???

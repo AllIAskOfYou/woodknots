@@ -9,7 +9,7 @@ import tqdm
 import tifffile as tiff
 
 from mltools import RAW_DIR, PROCESSED_DIR
-from mltools.seg.dataset import COCODataset
+from mltools.common.coco_dataset import COCODataset
 from mltools.seg.schema import DatasetConfig
 
 # from mltools.seg.transform import apply_vignette

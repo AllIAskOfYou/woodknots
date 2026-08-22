@@ -1,0 +1,4 @@
+# @package paths
+project_root: ${oc.env:PROJECT_ROOT}
+data_root: ${oc.env:DATA_ROOT, ${paths.project_root}/data}
+results_root: ${oc.env:RESULTS_ROOT, ${paths.project_root}/results}

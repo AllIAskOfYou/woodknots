@@ -1,6 +1,0 @@
-name: "knots_Min512_vignette"
-class_name: "wood_knot"
-resolution: 512
-mask_image:
-  class_name: "primary_log"
-  amount: 0.8
