@@ -39,6 +39,7 @@ dependencies = [
     "pyrr>=0.10.3",
     "imgui[glfw]>=2.0.0",
     "imgui-bundle>=1.92.801",
+    "nnunetv2>=2.8.1",
 ]
 
 [build-system]

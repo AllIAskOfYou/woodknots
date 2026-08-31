@@ -6,12 +6,14 @@ dataset:
   name: woodknots
   hf_repo_id: Elercast/WoodKnots-600
   hf_revision: v1.0
-  local_dir: ${paths.data_root}/raw
+  data_root: ${paths.data_root}
   folds:
     file_path: ${paths.project_root}/common/data_splits/split_k5_s42.json
     k: 5
-  class_names: ("wood_knot",)
+  class_names:
+  - wood_knot
   resolution: 256
+  id: 0
 experiment:
   name: exp_0
   fold: 0

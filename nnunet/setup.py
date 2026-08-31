@@ -1,36 +1,25 @@
 import json
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 
 from mltools.common.hf import ensure_dataset
 from mltools.common.setup import collect_dataset_variants, ensure_resized
-from mltools.nnunet.dataset import ensure_formatted
-from mltools.common.logger import IndentFilter, indented
+from mltools.nnunet.dataset import ensure_formatted, get_framework_root
+from mltools.common.logger import get_logger, indented
+from mltools.nnunet.preprocess import preprocess_datasets
 
-import logging
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.addFilter(IndentFilter())
-# print to stdout as well
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-logger.addHandler(console_handler)
+logger = get_logger(__name__)
 
 
-def main():
-    framework_dir = Path(__file__).parent
-    logger.info(f"Collecting dataset variants from framework dir: {framework_dir}")
-    dataset_variants = collect_dataset_variants(framework_dir)
+def prepare_datasets(dataset_variants: list[DictConfig]) -> None:
     for ds_idx, ds_hash in enumerate(dataset_variants):
         ds = dataset_variants[ds_hash]
-        data_dir = Path(ds.data_root)
         logger.info(
-            f"[{ds_idx + 1}/{len(dataset_variants)}]  Processing dataset variant: {ds_hash}"
+            f"[{ds_idx + 1}/{len(dataset_variants)}]  Processing dataset variant: {ds.id}"
         )
         with indented():
             dataset_dir = ensure_dataset(
-                data_dir=data_dir,
+                data_root=ds.data_root,
                 repo_id=ds.hf_repo_id,
                 revision=ds.hf_revision,
             )
@@ -44,10 +33,11 @@ def main():
         with indented():
             formatted_dir = ensure_formatted(
                 local_dir=resized_dir,
-                ds_hash=ds_hash,
+                ds_id=ds.id,
+                ds_name=ds.name,
                 class_names=ds.class_names,
                 folds_path=ds.folds.file_path,
-                data_dir=data_dir,
+                data_root=ds.data_root,
             )
             # store cfg into the formatted dir
             cfg_path = Path(formatted_dir) / "dataset_config.yaml"
@@ -61,6 +51,14 @@ def main():
             with open(manifest_path, "w") as f:
                 json.dump(manifest, f, indent=4)
             logger.info(f"nnUNet formatted dataset is available at: {formatted_dir}")
+
+
+def main():
+    framework_dir = Path(__file__).parent
+    logger.info(f"Collecting dataset variants from framework dir: {framework_dir}")
+    dataset_variants = collect_dataset_variants(framework_dir)
+    prepare_datasets(dataset_variants)
+    preprocess_datasets(dataset_variants)
 
 
 if __name__ == "__main__":

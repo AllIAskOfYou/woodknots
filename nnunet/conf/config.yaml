@@ -8,6 +8,13 @@ defaults:
 framework: "nnunet"
 time: ${now:%Y-%m-%d_%H-%M-%S}
 
+# paths:
+#   nnunet:
+#     data_root: ${paths.data_root}/nnunet_format
+#     raw: ${paths.nnunet.data_root}/raw
+#     preprocessed: ${paths.nnunet.data_root}/preprocessed
+#     results: ${paths.nnunet.data_root}/results
+
 
 hydra:
   searchpath:

@@ -3,4 +3,5 @@ experiment:
   name: exp_0
   fold: ???
 dataset:
+  id: 0
   resolution: 256

@@ -2,6 +2,17 @@ import contextlib
 import logging
 
 
+def get_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    logger.addFilter(IndentFilter())
+    # print to stdout as well
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    logger.addHandler(console_handler)
+    return logger
+
+
 class IndentFilter(logging.Filter):
     indent = 0  # class-level, shared across all loggers using this filter
     first_log = True  # class-level, shared across all loggers using this filter

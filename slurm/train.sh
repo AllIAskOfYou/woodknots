@@ -19,9 +19,6 @@ echo "Job started at: $(date)"
 echo "Running on node: $(hostname)"
 echo "========================================="
 
-# Load any required modules (uncomment and adjust for your cluster)
-# module load cuda/12.0
-# module load python/3.12
 
 # Get the absolute path of the current directory
 PROJECT_DIR=$(pwd)

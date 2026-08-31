@@ -9,8 +9,14 @@ from mltools.common.coco_dataset import COCODataset
 from mltools.common.logger import make_bar_format
 
 
-def get_dataset_dir(local_dir: str, ds_hash: str) -> str:
-    dataset_dir = Path(local_dir) / "nnunet_format" / f"{ds_hash}"
+def get_framework_root(data_root: str) -> str:
+    return str(Path(data_root) / "nnunet_format")
+
+
+def get_dataset_dir(data_root: str, ds_id: int, ds_name: str) -> str:
+    dataset_dir = (
+        Path(data_root) / "nnunet_format" / "raw" / f"Dataset{ds_id:03d}_{ds_name}"
+    )
     return str(dataset_dir)
 
 
@@ -78,13 +84,14 @@ def _process_case(
 
 def ensure_formatted(
     local_dir: str,
-    ds_hash: str,
+    ds_id: int,
+    ds_name: str,
     class_names: list[str],
     folds_path: str,
-    data_dir: str,
+    data_root: str,
     max_workers: int = 8,
 ) -> str:
-    dataset_dir = Path(get_dataset_dir(data_dir, ds_hash))
+    dataset_dir = Path(get_dataset_dir(data_root, ds_id, ds_name))
     marker = dataset_dir / ".complete"
     if marker.exists():
         return str(dataset_dir)

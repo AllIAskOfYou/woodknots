@@ -28,7 +28,7 @@ def collect_dataset_variants(framework_dir: Path) -> dict:
 
 
 def get_resized_dir(data_dir: str, resolution: int) -> str:
-    resized_dir = Path(data_dir) / "resized" / f"{resolution}"
+    resized_dir = Path(data_dir).parent / "resized" / f"{resolution}"
     return str(resized_dir)
 
 
@@ -37,7 +37,7 @@ def ensure_resized(dataset_dir: str, resolution: int) -> str:
     marker = Path(resized_dir) / ".complete"
     if marker.exists():
         return resized_dir
-    local_dir = Path(dataset_dir) / "raw"
+    local_dir = Path(dataset_dir)
     images_dir = local_dir / "images"
     annotations_path = local_dir / "annotations.json"
 

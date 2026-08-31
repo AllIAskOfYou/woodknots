@@ -116,7 +116,7 @@ hydra:
     - experiment=exp_0
     - experiment.fold=0
   job:
-    name: train
+    name: run
     chdir: false
     override_dirname: experiment.fold=0,experiment=exp_0
     id: ???

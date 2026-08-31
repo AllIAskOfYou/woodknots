@@ -8,9 +8,9 @@ def hash_dataset(data_dir: str, repo_id: str, revision: str) -> str:
     return hash_string(hash_input)
 
 
-def ensure_dataset(data_dir: str, repo_id: str, revision: str) -> str:
-    ds_hash = hash_dataset(data_dir, repo_id, revision)
-    local_dir = Path(data_dir) / "dataset" / ds_hash / "raw"
+def ensure_dataset(data_root: str, repo_id: str, revision: str) -> str:
+    ds_hash = hash_dataset(data_root, repo_id, revision)
+    local_dir = Path(data_root) / "dataset" / ds_hash / "raw"
     marker = local_dir / ".download_complete"
     if marker.exists():
         return local_dir
