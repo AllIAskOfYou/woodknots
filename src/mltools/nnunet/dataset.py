@@ -1,12 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import cv2
 import json
-import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
 from mltools.common.coco_dataset import COCODataset
 from mltools.common.logger import make_bar_format
+from mltools.common.masks import mask_to_label_map
 
 
 def get_framework_root(data_root: str) -> str:
@@ -18,27 +18,6 @@ def get_dataset_dir(data_root: str, ds_id: int, ds_name: str) -> str:
         Path(data_root) / "nnunet_format" / "raw" / f"Dataset{ds_id:03d}_{ds_name}"
     )
     return str(dataset_dir)
-
-
-def mask_to_label_map(
-    mask: np.ndarray,
-    threshold: float = 0.5,
-) -> np.ndarray:
-    """Collapse a (H, W, C) soft multi-channel mask into a single-channel
-    integer label map, as nnU-Net expects. Background = 0, classes = 1..C.
-
-    Overlapping classes are resolved by picking the channel with the
-    highest confidence at each pixel.
-    """
-    binary = mask >= threshold  # (H, W, C)
-    has_any = binary.any(axis=-1)
-
-    # channel index (0-based) with highest confidence, +1 to reserve 0 for background
-    label_map = np.zeros(mask.shape[:2], dtype=np.uint8)
-    best_channel = np.argmax(mask, axis=-1) + 1
-    label_map[has_any] = best_channel[has_any]
-
-    return label_map
 
 
 def build_dataset_json(
@@ -69,7 +48,7 @@ def _process_case(
     case_id = coco_ds.image_index_to_name(index)
 
     img = coco_ds.load_image(index)
-    mask = coco_ds.build_mask(index, img.shape[:2])
+    mask = coco_ds.build_mask(index, img.shape[:2], binary=True)
     mask_filtered = mask[:, :, class_indices]
     label_map = mask_to_label_map(mask_filtered)
 

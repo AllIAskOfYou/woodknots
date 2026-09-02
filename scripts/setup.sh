@@ -32,11 +32,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 run_local() {
-    uv run "${FRAMEWORK}/setup.py" env=local
+    uv run "${FRAMEWORK}/setup.py"
 }
 
 run_cluster() {
-    local inner_cmd="uv run ${FRAMEWORK}/setup.py env=cluster"
+    local inner_cmd="uv run ${FRAMEWORK}/setup.py"
     srun \
         --gres=gpu --cpus-per-task=8 --mem=32G --time=06:00:00 \
         --container-image=./containers/base.sqsh \

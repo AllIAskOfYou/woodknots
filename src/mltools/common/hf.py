@@ -17,7 +17,7 @@ def ensure_dataset(data_root: str, repo_id: str, revision: str) -> str:
     local_dir = Path(data_root) / "dataset" / ds_hash / "raw"
     marker = local_dir / ".download_complete"
     if marker.exists():
-        return local_dir
+        return str(local_dir)
 
     snapshot_download(
         repo_id=repo_id,
@@ -27,4 +27,4 @@ def ensure_dataset(data_root: str, repo_id: str, revision: str) -> str:
         token=os.getenv("HF_TOKEN") # TODO: this will not be needed once the datasets are public
     )
     marker.touch()
-    return local_dir
+    return str(local_dir)

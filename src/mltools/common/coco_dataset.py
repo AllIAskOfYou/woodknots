@@ -27,7 +27,7 @@ class COCODataset:
     def image_index_to_name(self, index: int) -> str:
         img_id = self.ids[index]
         img_info = self.coco.loadImgs(img_id)[0]
-        return "".join(img_info["file_name"].split(".")[:-1])
+        return Path(img_info["file_name"]).stem
 
     def load_image(self, index: int) -> np.ndarray:
         img_id = self.ids[index]
@@ -38,7 +38,7 @@ class COCODataset:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         return img  # uint8, unnormalized
 
-    def build_mask(self, index: int, shape: tuple[int, int]) -> np.ndarray:
+    def build_mask(self, index: int, shape: tuple[int, int], binary: bool = False) -> np.ndarray:
         img_id = self.ids[index]
         ann_ids = self.coco.getAnnIds(imgIds=img_id)
         anns = self.coco.loadAnns(ann_ids)
@@ -57,6 +57,8 @@ class COCODataset:
             m = m.astype(np.float32) * float(confidence)
             full_mask[:, :, channel] = np.maximum(full_mask[:, :, channel], m)
 
+        if binary:
+            full_mask = (full_mask > 0).astype(np.float32)
         return full_mask
 
     def __getitem__(self, index: int) -> tuple[np.ndarray, np.ndarray]:

@@ -113,13 +113,12 @@ hydra:
     hydra:
     - hydra.mode=RUN
     task:
-    - env=cluster
     - experiment=exp_0
     - experiment.fold=0
   job:
     name: run
     chdir: false
-    override_dirname: env=cluster,experiment.fold=0,experiment=exp_0
+    override_dirname: experiment.fold=0,experiment=exp_0
     id: ???
     num: ???
     config_name: config
@@ -151,7 +150,6 @@ hydra:
     choices:
       experiment: exp_0
       dataset: woodknots
-      env: cluster
       hydra/env: default
       hydra/callbacks: null
       hydra/job_logging: default

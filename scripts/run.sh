@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --gres=gpu:L4
+#SBATCH --gres=gpu
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
@@ -45,11 +45,11 @@ done
 
 
 run_local() {
-    uv run "${FRAMEWORK}/run.py" env=local experiment="${EXPERIMENT}" experiment.fold="${FOLD}"
+    uv run "${FRAMEWORK}/run.py" experiment="${EXPERIMENT}" experiment.fold="${FOLD}"
 }
 
 run_cluster() {
-    local inner_cmd="uv run ${FRAMEWORK}/run.py env=cluster experiment=${EXPERIMENT} experiment.fold=${FOLD}"
+    local inner_cmd="uv run ${FRAMEWORK}/run.py experiment=${EXPERIMENT} experiment.fold=${FOLD}"
     srun \
         --container-image=./containers/base.sqsh \
         --container-mounts="${PWD}:/workspace" \

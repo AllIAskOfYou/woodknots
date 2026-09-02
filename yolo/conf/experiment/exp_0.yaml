@@ -1,0 +1,14 @@
+# @package _global_
+experiment:
+  name: exp_0
+  fold: ???
+  model_path: yolo26m-seg.pt
+  batch: 16
+  epochs: 120
+dataset:
+  id: 0
+  resolution: 640
+  label:
+    wood_knot_categorization: combined
+    wood_knot_confidences: [0.2, 0.6, 1.0]
+    primary_log: false

@@ -1,5 +1,5 @@
 defaults:
-  - env: local
+  - env
   - dataset: woodknots
   - experiment: ???
   - _self_

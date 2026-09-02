@@ -1,0 +1,21 @@
+defaults:
+  - env
+  - dataset: woodknots
+  - experiment: ???
+  - _self_
+
+
+framework: "yolo"
+time: ${now:%Y-%m-%d_%H-%M-%S}
+
+paths:
+  run_dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
+
+
+hydra:
+  searchpath:
+    - file://${oc.env:PWD}/common/conf
+  run:
+    dir: ${paths.run_dir}
+  job:
+    chdir: false

@@ -9,7 +9,7 @@ from mltools.nnunet.utils import build_nnunet_env
 logger = get_logger(__name__)
 
 
-def preprocess_dataset(cfg: DictConfig, seed: int) -> None:
+def preprocess_dataset(cfg: DictConfig) -> None:
     ds_cfg = cfg
     dataset_id = ds_cfg.id
     dataset_name = f"Dataset{dataset_id:03d}_{ds_cfg.name}"
@@ -23,7 +23,6 @@ def preprocess_dataset(cfg: DictConfig, seed: int) -> None:
         nnunet_raw=str(nnunet_raw_root),
         nnunet_preprocessed=str(nnunet_preprocessed_root),
         nnunet_results="",
-        nnunet_seed=seed
     )
 
     preprocessed_marker = nnunet_preprocessed_root / dataset_name / ".preprocessed"
@@ -44,11 +43,11 @@ def preprocess_dataset(cfg: DictConfig, seed: int) -> None:
 
 
 
-def preprocess_datasets(dataset_variants: list[DictConfig], seed: int) -> None:
+def preprocess_datasets(dataset_variants: list[DictConfig]) -> None:
     for ds_idx, ds_hash in enumerate(dataset_variants):
         ds = dataset_variants[ds_hash]
         logger.info(
             f"[{ds_idx + 1}/{len(dataset_variants)}]  (nnunet) preprocessing dataset: {ds.id}"
         )
         with indented():
-            preprocess_dataset(ds, seed)
+            preprocess_dataset(ds)
