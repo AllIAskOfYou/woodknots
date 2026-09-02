@@ -7,19 +7,21 @@ defaults:
 
 framework: "nnunet"
 time: ${now:%Y-%m-%d_%H-%M-%S}
+seed: 42
 
-# paths:
-#   nnunet:
-#     data_root: ${paths.data_root}/nnunet_format
-#     raw: ${paths.nnunet.data_root}/raw
-#     preprocessed: ${paths.nnunet.data_root}/preprocessed
-#     results: ${paths.nnunet.data_root}/results
+paths:
+  run_dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
+  nnunet:
+    data_root: ${paths.data_root}/nnunet_format
+    raw: ${paths.nnunet.data_root}/raw
+    preprocessed: ${paths.nnunet.data_root}/preprocessed
+    results: ${paths.run_dir}/nnunet_native
 
 
 hydra:
   searchpath:
-    - file://${oc.env:PROJECT_ROOT}/common/conf
+    - file://${oc.env:PWD}/common/conf
   run:
-    dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
+    dir: ${paths.run_dir}
   job:
     chdir: false

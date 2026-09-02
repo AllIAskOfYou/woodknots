@@ -1,7 +1,13 @@
 paths:
-  project_root: ${oc.env:PROJECT_ROOT}
-  data_root: ${oc.env:DATA_ROOT, ${paths.project_root}/data}
-  results_root: ${oc.env:RESULTS_ROOT, ${paths.project_root}/results}
+  project_root: /workspace
+  data_root: ${paths.project_root}/data
+  results_root: ${paths.project_root}/results
+  run_dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
+  nnunet:
+    data_root: ${paths.data_root}/nnunet_format
+    raw: ${paths.nnunet.data_root}/raw
+    preprocessed: ${paths.nnunet.data_root}/preprocessed
+    results: ${paths.run_dir}/nnunet_native
 dataset:
   name: woodknots
   hf_repo_id: Elercast/WoodKnots-600
@@ -19,3 +25,4 @@ experiment:
   fold: 0
 framework: nnunet
 time: ${now:%Y-%m-%d_%H-%M-%S}
+seed: 42

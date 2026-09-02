@@ -83,3 +83,10 @@ AssertionError: Found more than one file ending in the folder /home/matic/mltool
 [2026-08-22 18:52:53,001][mltools.nnunet.train][INFO] - 2026-08-22 18:52:52.988565: Desired fold for training: 0
 [2026-08-22 18:52:53,001][mltools.nnunet.train][INFO] - 2026-08-22 18:52:52.988625: This split has 452 training and 148 validation cases.
 [2026-08-22 18:52:54,897][mltools.nnunet.train][INFO] - using pin_memory on device 0
+[2026-09-01 18:15:01,263][__main__][INFO] - Starting run: framework=nnunet, experiment=exp_0
+[2026-09-01 18:15:01,267][mltools.nnunet.train][INFO] - [exp_0 | Dataset000_woodknots | fold 0] Starting training...
+[2026-09-01 18:15:01,267][mltools.nnunet.train][INFO] - Running: nnUNetv2_train 000 2d 0 -tr nnUNetTrainer -p nnUNetPlans -device cuda --c
+[2026-09-02 13:51:49,064][mltools.nnunet.train][INFO] - [exp_0 | Dataset000_woodknots | fold 0] Starting training...
+[2026-09-02 13:51:49,065][mltools.nnunet.train][INFO] - Running: nnUNetv2_train 000 2d 0 -tr nnUNetTrainer -p nnUNetPlans -device cuda --c
+[2026-09-02 14:09:48,003][mltools.nnunet.train][INFO] - [exp_0 | Dataset000_woodknots | fold 0] Starting training...
+[2026-09-02 14:09:48,004][mltools.nnunet.train][INFO] - Running: nnUNetv2_train 000 2d 0 -tr nnUNetTrainer -p nnUNetPlans -device cuda --c

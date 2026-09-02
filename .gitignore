@@ -14,3 +14,5 @@ slurm_logs
 secrets.env
 visualizations/
 imgui.ini
+results/
+**/*.sqsh

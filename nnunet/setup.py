@@ -58,7 +58,7 @@ def main():
     logger.info(f"Collecting dataset variants from framework dir: {framework_dir}")
     dataset_variants = collect_dataset_variants(framework_dir)
     prepare_datasets(dataset_variants)
-    preprocess_datasets(dataset_variants)
+    preprocess_datasets(dataset_variants, seed=42)
 
 
 if __name__ == "__main__":

@@ -27,15 +27,11 @@ def train(cfg: DictConfig) -> None:
         "--c",
     ]
 
-    nnunet_root = Path(cfg.dataset.data_root) / "nnunet_format"
-    nnunet_raw_root = nnunet_root / "raw"
-    nnunet_preprocessed_root = nnunet_root / "preprocessed"
-    nnunet_results_root = nnunet_root / "results"
-
     env = build_nnunet_env(
-        nnunet_raw=str(nnunet_raw_root),
-        nnunet_preprocessed=str(nnunet_preprocessed_root),
-        nnunet_results=str(nnunet_results_root),
+        nnunet_raw=str(cfg.paths.nnunet.raw),
+        nnunet_preprocessed=str(cfg.paths.nnunet.preprocessed),
+        nnunet_results=str(cfg.paths.nnunet.results),
+        nnunet_seed=cfg.get("seed", 42)
     )
     logger.info(
         f"[{cfg.experiment.name} | {dataset_name} | fold {fold}] Starting training..."

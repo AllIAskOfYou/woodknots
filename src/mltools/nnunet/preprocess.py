@@ -9,7 +9,7 @@ from mltools.nnunet.utils import build_nnunet_env
 logger = get_logger(__name__)
 
 
-def preprocess_dataset(cfg: DictConfig) -> None:
+def preprocess_dataset(cfg: DictConfig, seed: int) -> None:
     ds_cfg = cfg
     dataset_id = ds_cfg.id
     dataset_name = f"Dataset{dataset_id:03d}_{ds_cfg.name}"
@@ -17,14 +17,13 @@ def preprocess_dataset(cfg: DictConfig) -> None:
     nnunet_root = Path(get_framework_root(ds_cfg.data_root))
     nnunet_raw_root = nnunet_root / "raw"
     nnunet_preprocessed_root = nnunet_root / "preprocessed"
-    nnunet_results_root = nnunet_root / "results"
-    for d in (nnunet_preprocessed_root, nnunet_results_root):
-        d.mkdir(parents=True, exist_ok=True)
+    nnunet_preprocessed_root.mkdir(parents=True, exist_ok=True)
 
     env = build_nnunet_env(
         nnunet_raw=str(nnunet_raw_root),
         nnunet_preprocessed=str(nnunet_preprocessed_root),
-        nnunet_results=str(nnunet_results_root),
+        nnunet_results="",
+        nnunet_seed=seed
     )
 
     preprocessed_marker = nnunet_preprocessed_root / dataset_name / ".preprocessed"
@@ -44,11 +43,12 @@ def preprocess_dataset(cfg: DictConfig) -> None:
         logger.info(f"Dataset {dataset_id} already preprocessed, skipping.")
 
 
-def preprocess_datasets(dataset_variants: list[DictConfig]) -> None:
+
+def preprocess_datasets(dataset_variants: list[DictConfig], seed: int) -> None:
     for ds_idx, ds_hash in enumerate(dataset_variants):
         ds = dataset_variants[ds_hash]
         logger.info(
             f"[{ds_idx + 1}/{len(dataset_variants)}]  (nnunet) preprocessing dataset: {ds.id}"
         )
         with indented():
-            preprocess_dataset(ds)
+            preprocess_dataset(ds, seed)
