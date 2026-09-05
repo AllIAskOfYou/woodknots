@@ -5,13 +5,14 @@ from omegaconf import DictConfig
 
 from mltools.common.evaluate import check_dir_ready, evaluate_segmentation
 from mltools.common.logger import get_logger
+from mltools.common.utils import hash_cfg
 from mltools.yolo.dataset import get_class_names, get_dataset_dir
 
 logger = get_logger(__name__)
 
 
 def evaluate(cfg: DictConfig) -> None:
-    dataset_dir = get_dataset_dir(cfg.dataset.data_root, cfg.dataset.id, cfg.dataset.name)
+    dataset_dir = get_dataset_dir(cfg.dataset.data_root, cfg.dataset.name, hash_cfg(cfg.dataset))
     pred_dir = Path(cfg.paths.run_dir) / "predictions"
     gt_dir = Path(dataset_dir) / "gt_masks"
 

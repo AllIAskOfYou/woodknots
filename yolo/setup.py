@@ -14,7 +14,7 @@ def prepare_datasets(dataset_variants: list[DictConfig]) -> None:
     for ds_idx, ds_hash in enumerate(dataset_variants):
         ds = dataset_variants[ds_hash]
         logger.info(
-            f"[{ds_idx + 1}/{len(dataset_variants)}]  Processing dataset variant: {ds.id}"
+            f"[{ds_idx + 1}/{len(dataset_variants)}]  Processing dataset variant: {ds_hash}"
         )
         with indented():
             dataset_dir = ensure_dataset(
@@ -32,7 +32,7 @@ def prepare_datasets(dataset_variants: list[DictConfig]) -> None:
         with indented():
             formatted_dir = ensure_formatted(
                 local_dir=resized_dir,
-                ds_id=ds.id,
+                ds_hash=ds_hash,
                 ds_name=ds.name,
                 label_cfg=ds.label,
                 data_root=ds.data_root,

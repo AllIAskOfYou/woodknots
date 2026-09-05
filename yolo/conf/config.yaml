@@ -11,6 +11,21 @@ time: ${now:%Y-%m-%d_%H-%M-%S}
 paths:
   run_dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
 
+train:
+  epochs: 300
+  patience: 50
+  finetune_epochs: 20
+  augmentation:
+    hsv_h: 0.01
+    hsv_s: 0.3
+    hsv_v: 0.5
+    flipud: 0.5
+    fliplr: 0.5
+    degrees: 10.0
+    translate: 0.2
+    scale: 0.9
+    mosaic: 1.0
+
 
 hydra:
   searchpath:

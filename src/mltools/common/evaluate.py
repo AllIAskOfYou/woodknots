@@ -17,13 +17,12 @@ def _load_label_map(path: Path) -> np.ndarray:
 
 def _to_pseudo_logits(label_map: np.ndarray, num_classes: int) -> torch.Tensor:
     """One-hot decode a (H, W) label map (0=background, 1..C=class) into a
-    (1, C, H, W) tensor, encoded as pseudo-logits ({0,1} -> {-10, +10}) so
-    Metric.compute()'s threshold/sigmoid logic applies unchanged. Background
-    is not included as its own channel; Metric.compute() adds it back when
-    metric.background=True.
+    (1, C+1, H, W) tensor (channel 0 = background, 1..C = each class),
+    encoded as pseudo-logits ({0,1} -> {-10, +10}) so Metric.compute()'s
+    threshold/sigmoid logic applies unchanged.
     """
     channels = np.stack(
-        [(label_map == class_idx + 1) for class_idx in range(num_classes)], axis=0
+        [(label_map == class_idx) for class_idx in range(num_classes + 1)], axis=0
     )
     logits = np.where(channels, _FOREGROUND_LOGIT, -_FOREGROUND_LOGIT).astype(np.float32)
     return torch.from_numpy(logits).unsqueeze(0)

@@ -3,12 +3,20 @@ set -e
 set -u
 
 if [[ $# -lt 1 ]]; then
-    echo "Usage: $0 <framework> [--env=local|cluster]"
+    echo "Usage: $0 <framework> [<experiment>] [--env=local|cluster]"
     exit 1
 fi
 
 FRAMEWORK=$1
 shift
+
+EXPERIMENT=""
+
+# Optional positional experiment filter (must come before any --flag)
+if [[ $# -gt 0 && "$1" != --* ]]; then
+    EXPERIMENT="$1"
+    shift
+fi
 
 ENV="local"
 
@@ -33,29 +41,20 @@ done
 
 FOLDS=(0 1 2 3 4)
 
-EXPERIMENTS=($(ls "${FRAMEWORK}/conf/experiment" | sed 's/\.yaml$//'))
+if [[ -n "${EXPERIMENT}" ]]; then
+    if [[ ! -f "${FRAMEWORK}/conf/experiment/${EXPERIMENT}.yaml" ]]; then
+        echo "Experiment '${EXPERIMENT}' not found in ${FRAMEWORK}/conf/experiment/"
+        exit 1
+    fi
+    EXPERIMENTS=("${EXPERIMENT}")
+else
+    EXPERIMENTS=($(ls "${FRAMEWORK}/conf/experiment" | sed 's/\.yaml$//'))
+fi
 
 echo "Found ${#EXPERIMENTS[@]} experiments for framework=${FRAMEWORK}: ${EXPERIMENTS[*]}"
 
 for exp_name in "${EXPERIMENTS[@]}"; do
     for fold in "${FOLDS[@]}"; do
-        if [[ "${ENV}" == "local" ]]; then
-            echo "Running ${FRAMEWORK} experiment=${exp_name} fold=${fold} locally"
-            ./scripts/run.sh "${FRAMEWORK}" "${exp_name}" "${fold}" --env=${ENV}
-            continue
-        fi
-        if [[ "${ENV}" == "cluster" ]]; then
-            job_name="${FRAMEWORK}-${exp_name}-fold_${fold}"
-            echo "Submitting ${job_name}"
-
-            sbatch --job-name="${job_name}" \
-                --output="slurm_logs/${job_name}_%j.out" \
-                --error="slurm_logs/${job_name}_%j.err" \
-                ./scripts/run.sh "${FRAMEWORK}" "${exp_name}" "${fold}" --env=${ENV}
-            continue
-        else
-            echo "Unknown environment: ${ENV}"
-            exit 1
-        fi
+        ./scripts/run.sh "${FRAMEWORK}" "${exp_name}" "${fold}" --env=${ENV}
     done
 done

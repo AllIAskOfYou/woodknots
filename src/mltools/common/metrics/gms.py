@@ -117,8 +117,20 @@ def _greedy_matching_score(inputs: torch.Tensor, targets: torch.Tensor):
 
 
 class GMSScore(Metric):
+    """Instance-level greedy-matching F1 score (connected components + greedy
+    IoU matching, ranked by confidence).
+
+    Expects channel 0 of `inputs`/`targets` to be the background class (as
+    produced by e.g. mltools.common.evaluate._to_pseudo_logits) and always
+    drops it before scoring: connected-component instance matching is only
+    meaningful for foreground object classes.
+    """
+
     def __init__(self, average: Literal["micro", "macro", "weighted"] = "macro"):
-        super().__init__(soft=True, background=False, average=average)
+        super().__init__(soft=True, average=average)
+
+    def compute(self, inputs: torch.Tensor, targets: torch.Tensor) -> float:
+        return super().compute(inputs[:, 1:], targets[:, 1:])
 
     def __call__(self, inputs: torch.Tensor, targets: torch.Tensor):
         return _greedy_matching_score(inputs, targets)

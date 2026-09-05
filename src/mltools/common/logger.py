@@ -9,7 +9,7 @@ def get_logger(name: str) -> logging.Logger:
     # print to stdout as well
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
-    logger.addHandler(console_handler)
+    #logger.addHandler(console_handler)
     return logger
 
 

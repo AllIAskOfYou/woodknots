@@ -16,3 +16,4 @@ visualizations/
 imgui.ini
 results/
 **/*.sqsh
+sc_uv.lock

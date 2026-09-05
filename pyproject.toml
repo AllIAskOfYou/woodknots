@@ -5,7 +5,7 @@ description = "Tools for ml tasks."
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
 dependencies = [
-    "torch",
+    "torch>=2.14.0",
     "torchvision",
     "albumentations",
     "hydra-core",
@@ -25,20 +25,8 @@ dependencies = [
     "transformers>=5.12.0",
     "huggingface-hub[cli]>=1.19.0",
     "fpdf>=1.7.2",
-    "pycolmap-cuda12>=4.1.1",
-    "trimesh>=4.12.2",
-    "rtree>=1.4.1",
-    "moderngl>=5.12.0",
-    "open3d>=0.19.0",
-    "pyvista>=0.48.4",
-    "pyopengl>=3.1.10",
-    "pyopengl-accelerate>=3.1.10",
-    "glfw>=2.10.2",
     "numpy>=2.4.6",
     "pillow>=12.2.0",
-    "pyrr>=0.10.3",
-    "imgui[glfw]>=2.0.0",
-    "imgui-bundle>=1.92.801",
     "nnunetv2>=2.8.1",
 ]
 

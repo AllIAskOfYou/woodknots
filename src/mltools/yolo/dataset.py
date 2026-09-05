@@ -18,8 +18,8 @@ def get_framework_root(data_root: str) -> str:
     return str(Path(data_root) / "yolo_format")
 
 
-def get_dataset_dir(data_root: str, ds_id: int, ds_name: str) -> str:
-    return str(Path(get_framework_root(data_root)) / f"Dataset{ds_id:03d}_{ds_name}")
+def get_dataset_dir(data_root: str, ds_name: str, ds_hash: str) -> str:
+    return str(Path(get_framework_root(data_root)) / f"{ds_name}_{ds_hash}")
 
 
 def get_class_names(label_cfg: DictConfig) -> dict[int, str]:
@@ -128,15 +128,19 @@ def _process_case(
 
 def ensure_formatted(
     local_dir: str,
-    ds_id: int,
+    ds_hash: str,
     ds_name: str,
     label_cfg: DictConfig,
     data_root: str,
 ) -> str:
     """Fold-independent: symlinks the resized images and writes YOLO labels/
     plus rasterized gt_masks/ for every case. Marker-file cached, same
-    convention as nnunet's ensure_formatted."""
-    dataset_dir = Path(get_dataset_dir(data_root, ds_id, ds_name))
+    convention as nnunet's ensure_formatted. Directory is named by content
+    hash of the dataset config (ds_hash) rather than a manually-assigned
+    numeric id — unlike nnU-Net, YOLO's tooling has no requirement for a
+    `DatasetXXX_Name`-style numeric id, so there's nothing for one to serve
+    beyond bookkeeping that can drift out of sync."""
+    dataset_dir = Path(get_dataset_dir(data_root, ds_name, ds_hash))
     marker = dataset_dir / ".complete"
     if marker.exists():
         return str(dataset_dir)
@@ -171,19 +175,51 @@ def ensure_formatted(
 
 
 def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str, class_names: dict[int, str]) -> str:
-    """Fold-dependent, cheap, uncached — writes out_dir/train.txt, out_dir/val.txt
-    (absolute paths into dataset_dir/images) and out_dir/data.yaml. Called by
-    both train.py and evaluate.py, so each run gets its own fold-specific
-    data.yaml without mutating the shared formatted dataset."""
+    """Fold-dependent, cheap, uncached — populates out_dir/{train,val}/{images,labels}/
+    with symlinks into the shared formatted dataset (no duplication of the
+    underlying files), writes out_dir/{train,val}.txt, and out_dir/data.yaml.
+    Called by both train.py and evaluate.py, so each run gets its own
+    fold-specific data.yaml without mutating the shared formatted dataset.
+
+    Train and val each get their own images/labels directory tree rather than
+    just their own file list. Ultralytics derives its label-cache path purely
+    from the labels directory (ignoring which specific files are listed), so
+    if both splits pointed at the same shared labels/ dir they'd compute the
+    identical cache path — whichever split's dataloader is built second would
+    then load the cache the first split had just written, and hitting that
+    file mid-write (or a stale one from an earlier crashed run) can look like
+    a truncated pickle. Distinct directories give each split its own cache
+    path instead.
+    """
     folds = json.loads(Path(folds_path).read_text())
     split = folds[fold]
 
-    images_dir = Path(dataset_dir) / "images"
+    # Resolve to absolute: symlink_to with a relative target resolves relative
+    # to the symlink's own directory, not CWD, so a relative dataset_dir here
+    # would silently point the wrong way.
+    dataset_dir = Path(dataset_dir).resolve()
+    src_images_dir = dataset_dir / "images"
+    src_labels_dir = dataset_dir / "labels"
     out_path = Path(out_dir)
-    out_path.mkdir(parents=True, exist_ok=True)
 
     for split_name in ("train", "val"):
-        lines = [str(images_dir / f"{case_id}.png") for case_id in split[split_name]]
+        images_dir = out_path / split_name / "images"
+        labels_dir = out_path / split_name / "labels"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        labels_dir.mkdir(parents=True, exist_ok=True)
+
+        lines = []
+        for case_id in split[split_name]:
+            image_link = images_dir / f"{case_id}.png"
+            if not image_link.exists():
+                image_link.symlink_to(src_images_dir / f"{case_id}.png")
+            lines.append(str(image_link))
+
+            src_label = src_labels_dir / f"{case_id}.txt"
+            label_link = labels_dir / f"{case_id}.txt"
+            if src_label.exists() and not label_link.exists():
+                label_link.symlink_to(src_label)
+
         (out_path / f"{split_name}.txt").write_text("\n".join(lines))
 
     data_yaml = {

@@ -1,12 +1,4 @@
 #!/bin/bash
-#SBATCH --gres=gpu
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=12:00:00
-#SBATCH --ntasks=1
-
-set -e
-set -u
 
 # Check positional argument for framework
 if [[ $# -lt 3 ]]; then
@@ -43,22 +35,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-
 run_local() {
+    echo "Running ${FRAMEWORK} experiment=${EXPERIMENT} fold=${FOLD} locally"
     uv run "${FRAMEWORK}/run.py" experiment="${EXPERIMENT}" experiment.fold="${FOLD}"
 }
 
 run_cluster() {
-    local inner_cmd="uv run ${FRAMEWORK}/run.py experiment=${EXPERIMENT} experiment.fold=${FOLD}"
-    srun \
-        --container-image=./containers/base.sqsh \
-        --container-mounts="${PWD}:/workspace" \
-        --container-workdir=/workspace \
-        bash -c "${inner_cmd}"
+    job_name="${FRAMEWORK}-${EXPERIMENT}-fold_${FOLD}"
+    echo "Submitting ${job_name}"
+    sbatch --job-name="${job_name}" \
+        --output="slurm_logs/${job_name}/%j.out" \
+        --error="slurm_logs/${job_name}/%j.err" \
+        ./scripts/run.sbatch "${FRAMEWORK}" "${EXPERIMENT}" "${FOLD}" --env=${ENV}
 }
 
-if [[ "$ENV" == "local" ]]; then
+if [[ "${ENV}" == "local" ]]; then
     run_local
-else
+elif [[ "${ENV}" == "cluster" ]]; then
     run_cluster
+else
+    echo "Unknown environment: ${ENV}"
+    exit 1
 fi

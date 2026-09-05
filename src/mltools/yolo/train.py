@@ -1,14 +1,48 @@
+import shutil
 from pathlib import Path
 
 import cv2
 import numpy as np
 from omegaconf import DictConfig
-from ultralytics import YOLO
+from ultralytics import YOLO, settings
+
 
 from mltools.common.logger import get_logger
+from mltools.common.utils import hash_cfg
 from mltools.yolo.dataset import get_class_names, get_dataset_dir, write_fold_split
 
 logger = get_logger(__name__)
+
+def setup_ultralytics(cfg: DictConfig) -> None:
+    ultralytics_root = Path(cfg.paths.project_root) / ".ultralytics"
+    ultralytics_root.mkdir(parents=True, exist_ok=True)
+    settings.update({
+        "runs_dir": str(Path(cfg.paths.run_dir) / "runs"),
+        "weights_dir": str(ultralytics_root / "weights"),
+        "datasets_dir": str(ultralytics_root / "datasets"),
+    })
+
+
+def _resolve_model_path(cfg: DictConfig) -> str:
+    """settings['weights_dir'] only affects Ultralytics' lookup of an
+    already-cached asset, not where a fresh download lands — a bare name
+    like 'yolo26m-seg.pt' downloads relative to CWD regardless of that
+    setting. Resolve explicitly against weights_dir so first-time downloads
+    land there instead."""
+    model_path = Path(cfg.experiment.model_path)
+    if model_path.is_absolute() or model_path.exists():
+        return str(model_path)
+    weights_dir = Path(settings["weights_dir"])
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    return str(weights_dir / model_path)
+
+
+def _weights_path(cfg: DictConfig) -> Path:
+    return Path(cfg.paths.run_dir) / "train" / "weights" / "best.pt"
+
+
+def _best_fitness(model: YOLO) -> float | None:
+    return getattr(getattr(model, "trainer", None), "best_fitness", None)
 
 
 def predict_label_maps(
@@ -39,13 +73,7 @@ def predict_label_maps(
 
 
 def train(cfg: DictConfig) -> None:
-    dataset_dir = get_dataset_dir(cfg.dataset.data_root, cfg.dataset.id, cfg.dataset.name)
-    class_names = get_class_names(cfg.dataset.label)
-    data_yaml = write_fold_split(
-        dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold, cfg.paths.run_dir, class_names
-    )
-
-    weights_path = Path(cfg.paths.run_dir) / "train" / "weights" / "best.pt"
+    weights_path = _weights_path(cfg)
     if weights_path.exists():
         logger.info(
             f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] "
@@ -53,40 +81,108 @@ def train(cfg: DictConfig) -> None:
         )
         return
 
-    device = cfg.experiment.get("device", "cuda:0")
-    model = YOLO(cfg.experiment.model_path)
-    logger.info(
-        f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Starting training..."
+    dataset_dir = get_dataset_dir(cfg.dataset.data_root, cfg.dataset.name, hash_cfg(cfg.dataset))
+    class_names = get_class_names(cfg.dataset.label)
+    data_yaml = write_fold_split(
+        dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold, cfg.paths.run_dir, class_names
     )
-    model.train(
+
+    device = cfg.experiment.get("device", "cuda:0")
+    tag = f"[{cfg.experiment.name} | fold {cfg.experiment.fold}]"
+
+    # Phase 1: main training run, mosaic on throughout — close_mosaic=0 disables
+    # Ultralytics' automatic mosaic-off tail, since patience-based early stopping
+    # could otherwise end training before that tail is ever reached.
+    logger.info(f"{tag} Starting training...")
+    model = YOLO(_resolve_model_path(cfg))
+    aug = cfg.train.augmentation
+    shared_kwargs = dict(
         project=str(cfg.paths.run_dir),
-        name="train",
         exist_ok=True,
         data=data_yaml,
-        epochs=cfg.experiment.epochs,
         imgsz=cfg.dataset.resolution,
         batch=cfg.experiment.batch,
         device=device,
         save_json=True,
-        # Augmentation (helps prevent overfitting on texture)
-        hsv_h=0.015,
-        hsv_s=0.7,
-        hsv_v=0.4,
-        degrees=10.0,
-        translate=0.2,
-        scale=0.9,
-        mosaic=1.0,
-        close_mosaic=20,
+        hsv_h=aug.hsv_h,
+        hsv_s=aug.hsv_s,
+        hsv_v=aug.hsv_v,
+        degrees=aug.degrees,
+        translate=aug.translate,
+        scale=aug.scale,
     )
+    model.train(
+        name="train",
+        epochs=cfg.train.epochs,
+        patience=cfg.train.patience,
+        mosaic=aug.mosaic,
+        close_mosaic=0,
+        **shared_kwargs
+    )
+    phase1_fitness = _best_fitness(model)
+    logger.info(f"{tag} Training complete, best fitness={phase1_fitness:.4f}, weights at {weights_path}")
 
+    # Phase 2: short fixed fine-tune without mosaic, starting from phase 1's
+    # best weights, guaranteeing a mosaic-free polish happens regardless of
+    # when (or whether) phase 1's patience triggered early stopping. No
+    # patience here — it's a fixed, short budget by design.
+    logger.info(f"{tag} Fine-tuning for {cfg.train.finetune_epochs} epochs without mosaic...")
+    finetune_model = YOLO(str(weights_path))
+    finetune_model.train(
+        name="finetune",
+        epochs=cfg.train.finetune_epochs,
+        mosaic=0,
+        close_mosaic=0,
+        **shared_kwargs
+    )
+    phase2_fitness = _best_fitness(finetune_model)
+    logger.info(f"{tag} Fine-tuning complete, best fitness={phase2_fitness:.4f}")
+    finetune_best = Path(cfg.paths.run_dir) / "finetune" / "weights" / "best.pt"
+
+    if phase1_fitness is not None and phase2_fitness is not None and phase2_fitness > phase1_fitness:
+        logger.info(
+            f"{tag} Fine-tuned weights improved fitness "
+            f"({phase2_fitness:.4f} > {phase1_fitness:.4f}), replacing {weights_path}."
+        )
+        shutil.copy(finetune_best, weights_path)
+    else:
+        logger.info(
+            f"{tag} Fine-tuning did not improve fitness "
+            f"(phase1={phase1_fitness}, phase2={phase2_fitness}), keeping phase-1 weights."
+        )
+
+
+def predict(cfg: DictConfig) -> None:
+    weights_path = _weights_path(cfg)
+    if not weights_path.exists():
+        raise RuntimeError(
+            f"Cannot generate predictions: no trained weights at {weights_path}. "
+            f"Run training first."
+        )
+
+    pred_dir = Path(cfg.paths.run_dir) / "predictions"
+    if pred_dir.exists() and any(pred_dir.iterdir()):
+        logger.info(
+            f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] "
+            f"Predictions already generated (found {pred_dir}), skipping."
+        )
+        return
+
+    dataset_dir = get_dataset_dir(cfg.dataset.data_root, cfg.dataset.name, hash_cfg(cfg.dataset))
+    class_names = get_class_names(cfg.dataset.label)
     # Ultralytics' own post-training validation only computes aggregate metrics/plots,
     # not per-case rasterized predictions like nnU-Net saves automatically — generate
     # them explicitly so evaluate.py can stay pure scoring.
+    write_fold_split(
+        dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold, cfg.paths.run_dir, class_names
+    )
     val_image_paths = [
         Path(line)
         for line in (Path(cfg.paths.run_dir) / "val.txt").read_text().splitlines()
         if line
     ]
+
+    device = cfg.experiment.get("device", "cuda:0")
     logger.info(
         f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating validation predictions..."
     )
@@ -94,6 +190,6 @@ def train(cfg: DictConfig) -> None:
         YOLO(str(weights_path)),
         val_image_paths,
         num_classes=len(class_names),
-        out_dir=Path(cfg.paths.run_dir) / "predictions",
+        out_dir=pred_dir,
         device=device,
     )

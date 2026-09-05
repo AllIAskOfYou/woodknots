@@ -6,9 +6,7 @@ from .gms import GMSScore
 __all__ = ["Metric", "DiceScore", "IoUScore", "GMSScore"]
 
 STANDARD_METRICS = {
-    "dice": DiceScore(soft=False, background=True, average="macro"),
-    # "dice_nobg": DiceScore(soft=False, background=False, average="macro"),
-    # "dice_soft": DiceScore(soft=True, background=True, average="macro"),
-    "iou": IoUScore(soft=False, background=True, average="macro"),
+    "dice": DiceScore(soft=False, average="macro"),
+    "iou": IoUScore(soft=False, average="macro"),
     "gms": GMSScore(average="macro"),
 }

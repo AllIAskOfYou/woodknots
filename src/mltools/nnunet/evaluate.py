@@ -36,7 +36,9 @@ def evaluate(cfg: DictConfig) -> None:
         gt_dir=str(gt_dir),
         class_names=cfg.dataset.class_names,
     )
-    logger.info(f"Results: {results['metrics']}")
+    
+    rounded = {k: round(v, 2) for k, v in results["metrics"].items()}
+    logger.info(f"Results: {rounded}")
 
     out_path = Path(cfg.paths.run_dir) / "eval_results.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)

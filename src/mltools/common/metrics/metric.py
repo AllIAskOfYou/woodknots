@@ -31,11 +31,9 @@ class Metric(ABC):
     def __init__(
         self,
         soft: bool = False,
-        background: bool = False,
         average: Literal["micro", "macro", "weighted"] = "macro",
     ):
         self.soft = soft
-        self.background = background
         self.average = average
 
     @abstractmethod
@@ -52,9 +50,6 @@ class Metric(ABC):
             targets = targets > 0.5
             preds = preds.long()
             targets = targets.long()
-        if self.background:
-            preds = torch.cat([1 - preds, preds], dim=1)
-            targets = torch.cat([1 - targets, targets], dim=1)
         targets_sum = torch.sum(targets, dim=list(range(2, targets.ndim)))
         intersection, union = self.__call__(preds, targets)
         dice = _average_classes(intersection, union, targets_sum, average=self.average)
