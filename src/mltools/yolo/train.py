@@ -107,9 +107,14 @@ def train(cfg: DictConfig) -> None:
         hsv_h=aug.hsv_h,
         hsv_s=aug.hsv_s,
         hsv_v=aug.hsv_v,
+        flipud=aug.flipud,
+        fliplr=aug.fliplr,
         degrees=aug.degrees,
         translate=aug.translate,
         scale=aug.scale,
+        copy_paste=aug.copy_paste,
+        copy_paste_mode=aug.copy_paste_mode,
+        freeze=cfg.train.freeze,
     )
     model.train(
         name="train",

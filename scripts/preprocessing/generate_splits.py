@@ -16,6 +16,12 @@ if __name__ == "__main__":
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
     parser.add_argument(
+        "--method",
+        type=str,
+        default="random",
+        help="Method for splitting (random or greedy)",
+    )
+    parser.add_argument(
         "--output_path",
         type=str,
         default=None,
@@ -23,7 +29,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    splits = get_folds(args.data_dir, k=args.k, seed=args.seed)
+    splits = get_folds(args.data_dir, k=args.k, method=args.method, seed=args.seed)
     if args.output_path is None:
         args.output_path = f"{args.data_dir}/splits.json"
     with open(args.output_path, "w") as f:

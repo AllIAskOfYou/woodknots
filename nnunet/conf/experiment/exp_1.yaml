@@ -1,6 +1,5 @@
 # @package _global_
 experiment:
-  name: exp_1
   fold: ???
 dataset:
   id: 1

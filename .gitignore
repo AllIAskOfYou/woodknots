@@ -15,5 +15,6 @@ secrets.env
 visualizations/
 imgui.ini
 results/
+results_sc/
 **/*.sqsh
 sc_uv.lock

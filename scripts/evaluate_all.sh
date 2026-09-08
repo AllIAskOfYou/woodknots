@@ -42,16 +42,29 @@ done
 FOLDS=(0 1 2 3 4)
 
 if [[ -n "${EXPERIMENT}" ]]; then
-    if [[ ! -f "${FRAMEWORK}/conf/experiment/${EXPERIMENT}.yaml" ]]; then
-        echo "Experiment '${EXPERIMENT}' not found in ${FRAMEWORK}/conf/experiment/"
+    if [[ ! -d "results/${FRAMEWORK}" ]]; then
+        echo "Experiment '${EXPERIMENT}' not found in results/${FRAMEWORK}"
         exit 1
     fi
     EXPERIMENTS=("${EXPERIMENT}")
 else
-    EXPERIMENTS=($(ls "${FRAMEWORK}/conf/experiment" | sed 's/\.yaml$//'))
+    EXPERIMENTS=($(ls "results/${FRAMEWORK}"))
 fi
 
 echo "Found ${#EXPERIMENTS[@]} experiments for framework=${FRAMEWORK}: ${EXPERIMENTS[*]}"
+
+if [[ "${ENV}" == "cluster" ]]; then
+    # All experiments/folds run sequentially inside a single sbatch job —
+    # evaluation is cheap CPU-only scoring (no GPU inference), so submitting
+    # one job per fold is pure SLURM scheduling/container-startup overhead.
+    job_name="${FRAMEWORK}-evaluate_all"
+    echo "Submitting ${job_name} (all ${#EXPERIMENTS[@]} experiments x ${#FOLDS[@]} folds as one job)"
+    sbatch --job-name="${job_name}" \
+        --output="slurm_logs/${job_name}/%j.out" \
+        --error="slurm_logs/${job_name}/%j.err" \
+        ./scripts/evaluate_all.sbatch "${FRAMEWORK}" "${EXPERIMENTS[*]}"
+    exit 0
+fi
 
 FAILED=()
 

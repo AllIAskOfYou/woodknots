@@ -1,0 +1,10 @@
+# @package _global_
+experiment:
+  fold: ???
+  model_path: yolo26m-seg.pt
+  batch: 16
+dataset:
+  resolution: 256
+
+train:
+  freeze: 11

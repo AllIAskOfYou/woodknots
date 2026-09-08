@@ -1,9 +1,9 @@
 import sys
 from pathlib import Path
 
-from hydra import compose, initialize_config_dir
+from hydra import initialize_config_dir
 
-from mltools.common.setup import get_experiment_names
+from mltools.common.setup import compose_with_hydra_config, get_experiment_names
 
 MIN_WEIGHTS_BYTES = 1024  # anything smaller than this is obviously truncated/corrupted
 
@@ -76,15 +76,13 @@ def main() -> int:
     results = []
     with initialize_config_dir(config_dir=config_dir, version_base=None):
         for exp_name in get_experiment_names(framework_dir):
-            probe_cfg = compose(
-                config_name="config",
-                overrides=[f"experiment={exp_name}", "experiment.fold=0"],
+            probe_cfg = compose_with_hydra_config(
+                [f"experiment={exp_name}", "experiment.fold=0"]
             )
             num_folds = probe_cfg.dataset.folds.k
             for fold in range(num_folds):
-                cfg = compose(
-                    config_name="config",
-                    overrides=[f"experiment={exp_name}", f"experiment.fold={fold}"],
+                cfg = compose_with_hydra_config(
+                    [f"experiment={exp_name}", f"experiment.fold={fold}"]
                 )
                 results.append(check_fold(cfg, framework))
 

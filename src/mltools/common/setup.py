@@ -1,5 +1,6 @@
 import hashlib
 from hydra import compose, initialize_config_dir
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 from pathlib import Path
 
@@ -10,6 +11,19 @@ from mltools.common.utils import hash_cfg
 def get_experiment_names(framework_dir: Path) -> list[str]:
     exp_dir = framework_dir / "conf" / "experiment"
     return sorted(f.stem for f in exp_dir.glob("*.yaml"))
+
+
+def compose_with_hydra_config(overrides: list[str]):
+    """hydra.compose() alone does not populate HydraConfig, so any
+    ${hydra:...} resolver (e.g. experiment.name: ${hydra:runtime.choices.experiment})
+    raises "HydraConfig was not set" the moment it's accessed outside a real
+    @hydra.main job. Passing return_hydra_config=True and registering the
+    result with HydraConfig fixes that for standalone compose() callers like
+    check_training.py / evaluate_all.py. Must be called within an active
+    initialize_config_dir(...) context, same as a plain compose() call."""
+    cfg = compose(config_name="config", overrides=overrides, return_hydra_config=True)
+    HydraConfig.instance().set_config(cfg)
+    return cfg
 
 
 def collect_dataset_variants(framework_dir: Path) -> dict:

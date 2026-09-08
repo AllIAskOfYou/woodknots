@@ -9,6 +9,9 @@ framework: "nnunet"
 time: ${now:%Y-%m-%d_%H-%M-%S}
 seed: 42
 
+experiment:
+  name: ${hydra:runtime.choices.experiment}
+
 paths:
   run_dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
   nnunet:

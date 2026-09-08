@@ -1,9 +1,17 @@
 from abc import ABC, abstractmethod
 import torch
-from typing import Callable, Literal
-from torchmetrics.utilities.compute import _safe_divide
-import cv2
-import numpy as np
+from typing import Literal
+
+
+def _safe_divide(numerator: torch.Tensor, denominator: torch.Tensor, zero_division: float = 0.0) -> torch.Tensor:
+    """Elementwise numerator/denominator, substituting zero_division wherever
+    denominator is 0 (avoids NaN/inf from division by zero). Inlined instead
+    of importing torchmetrics.utilities.compute._safe_divide for this one
+    helper — that import drags in torchmetrics' entire functional namespace,
+    which pulls in torchvision, which pulls in torch._dynamo, which is very
+    slow to import and otherwise unused here."""
+    fallback = torch.full_like(numerator, zero_division, dtype=torch.float)
+    return torch.where(denominator != 0, numerator / denominator, fallback)
 
 
 def _average_classes(

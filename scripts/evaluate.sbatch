@@ -1,4 +1,7 @@
 #!/bin/bash
+#SBATCH --gres=gpu:1
+#SBATCH --partition=frida
+#SBATCH --constraint=GPU_GEN:AMPERE|GPU_GEN:BLACKWELL|GPU_GEN:BLACKWELL_ULTRA
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 #SBATCH --time=00:30:00
