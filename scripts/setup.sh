@@ -36,13 +36,12 @@ run_local() {
 }
 
 run_cluster() {
-    local inner_cmd="uv run ${FRAMEWORK}/setup.py"
-    srun \
-        --gres=gpu --cpus-per-task=8 --mem=32G --time=06:00:00 \
-        --container-image=./containers/base.sqsh \
-        --container-mounts="${PWD}:/workspace" \
-        --container-workdir=/workspace \
-        bash -c "${inner_cmd}"
+    job_name="${FRAMEWORK}-setup"
+    echo "Submitting ${job_name}"
+    sbatch --job-name="${job_name}" \
+        --output="slurm_logs/${job_name}/%j.out" \
+        --error="slurm_logs/${job_name}/%j.err" \
+        ./scripts/setup.sbatch "${FRAMEWORK}" --env=${ENV}
 }
 
 if [[ "$ENV" == "local" ]]; then

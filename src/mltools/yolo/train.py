@@ -41,6 +41,16 @@ def _weights_path(cfg: DictConfig) -> Path:
     return Path(cfg.paths.run_dir) / "train" / "weights" / "best.pt"
 
 
+def _train_complete_marker(cfg: DictConfig) -> Path:
+    """best.pt gets written after the first improving epoch, not just at the
+    end — so its mere existence doesn't mean training actually finished (an
+    interrupted run leaves a partial best.pt behind too). This marker is
+    touched only as the very last step of a successful train() call, so an
+    interrupted run is correctly detected as incomplete and retrained from
+    scratch rather than silently treated as done."""
+    return Path(cfg.paths.run_dir) / "train" / ".complete"
+
+
 def _best_fitness(model: YOLO) -> float | None:
     return getattr(getattr(model, "trainer", None), "best_fitness", None)
 
@@ -74,10 +84,11 @@ def predict_label_maps(
 
 def train(cfg: DictConfig) -> None:
     weights_path = _weights_path(cfg)
-    if weights_path.exists():
+    marker = _train_complete_marker(cfg)
+    if marker.exists():
         logger.info(
             f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] "
-            f"Training already completed (found {weights_path}), skipping."
+            f"Training already completed (found {marker}), skipping."
         )
         return
 
@@ -156,12 +167,15 @@ def train(cfg: DictConfig) -> None:
             f"(phase1={phase1_fitness}, phase2={phase2_fitness}), keeping phase-1 weights."
         )
 
+    marker.touch()
+
 
 def predict(cfg: DictConfig) -> None:
     weights_path = _weights_path(cfg)
-    if not weights_path.exists():
+    marker = _train_complete_marker(cfg)
+    if not marker.exists():
         raise RuntimeError(
-            f"Cannot generate predictions: no trained weights at {weights_path}. "
+            f"Cannot generate predictions: training has not completed (no {marker}). "
             f"Run training first."
         )
 
