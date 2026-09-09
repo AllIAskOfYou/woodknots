@@ -28,7 +28,7 @@ run_cluster() {
     # loops all experiments/folds inside a single Python process), so the
     # per-process import/startup cost is paid once for the whole batch
     # instead of once per fold.
-    local inner_cmd="uv run ${FRAMEWORK}/evaluate_all.py '${EXPERIMENTS}'"
+    local inner_cmd="export PYTHONUNBUFFERED=1; uv run ${FRAMEWORK}/evaluate_all.py '${EXPERIMENTS}'"
     local container_name="jobcontainer_nnunet_${SLURM_JOB_ID}_$(hostname)"
 
     if enroot list | grep -qx "${container_name}"; then

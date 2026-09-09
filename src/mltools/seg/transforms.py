@@ -1,9 +1,7 @@
 import albumentations as A
 import cv2
-from mltools.seg.schema import PreprocessingConfig
-from mltools.seg.schema import AugmentationConfig
 import numpy as np
-from scipy.stats import norm
+from omegaconf import DictConfig
 
 
 def rotate_if_portrait(data, **kwargs):
@@ -104,7 +102,7 @@ class MaskVignetteTransform(A.DualTransform):
         return mask_blurred[..., np.newaxis] * vignette_map
 
 
-def get_preprocessing_transform(cfg: PreprocessingConfig):
+def get_preprocessing_transform(cfg: DictConfig):
     transforms = []
     if cfg.mask_image is not None and cfg.mask_image.distance > 0:
         transforms.append(
@@ -116,7 +114,7 @@ def get_preprocessing_transform(cfg: PreprocessingConfig):
     return A.Compose(transforms)
 
 
-def get_train_transform(cfg: AugmentationConfig):
+def get_train_transform(cfg: DictConfig):
     # Common size parameters
     target_size = (cfg.resolution, int(cfg.resolution * cfg.w2h_ratio))
 
@@ -196,7 +194,7 @@ def get_train_transform(cfg: AugmentationConfig):
     )
 
 
-def get_val_transform(cfg: AugmentationConfig):
+def get_val_transform(cfg: DictConfig):
     return A.Compose(
         [
             A.Normalize(),

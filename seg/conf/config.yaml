@@ -1,0 +1,24 @@
+defaults:
+  - env
+  - dataset: woodknots
+  - train: default
+  - experiment: ???
+  - _self_
+
+framework: "seg"
+time: ${now:%Y-%m-%d_%H-%M-%S}
+
+experiment:
+  name: ${hydra:runtime.choices.experiment}
+
+paths:
+  run_dir: ${paths.results_root}/${framework}/${experiment.name}/fold_${experiment.fold}
+
+
+hydra:
+  searchpath:
+    - file://${oc.env:PWD}/common/conf
+  run:
+    dir: ${paths.run_dir}
+  job:
+    chdir: false

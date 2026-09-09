@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 
@@ -60,5 +61,5 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     main()

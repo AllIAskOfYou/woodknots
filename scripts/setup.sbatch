@@ -23,7 +23,7 @@ shift
 
 run_cluster() {
     # Create a container and run the setup script inside it.
-    local inner_cmd="uv run ${FRAMEWORK}/setup.py"
+    local inner_cmd="export PYTHONUNBUFFERED=1; uv run ${FRAMEWORK}/setup.py"
     local container_name="jobcontainer_nnunet_${SLURM_JOB_ID}_$(hostname)"
 
     if enroot list | grep -qx "${container_name}"; then

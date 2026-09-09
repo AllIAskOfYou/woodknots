@@ -1,0 +1,60 @@
+class_name: wood_knot
+class_groups: null
+  # - value: 1.0
+    # classes: [0.2, 0.6, 1.0]
+
+resolution: ${dataset.resolution}
+total_epochs: 100
+batch_size: 20
+freeze_encoder: true
+
+model:
+  _target_: mltools.seg.dinov3.DINOv3MAnet
+  num_classes: 1
+
+optimizer:
+  lr: 1.0e-4
+  weight_decay: 1.0
+
+scheduler:
+  _target_: mltools.seg.scheduler.get_cosine_schedule_with_warmup
+  num_epochs: ${train.total_epochs}
+  num_warmup_epochs: 5
+  num_cycles: 0.5
+
+loss:
+  weight: 0.5
+  labels_smoothing: 0.05
+
+preprocessing:
+  mask_image: null
+
+augmentation:
+  resolution: ${train.resolution}
+  w2h_ratio: 1.0
+  mosaic_p: 0.5
+  distortion:
+    elastic:
+      alpha: 100.0
+      sigma: 10.0
+    grid:
+      num_steps: 5
+      distort_limit: 0.3
+    p: 0.85
+    e2g_ratio: 1.0
+  random_crop:
+    scale: [1.0, 1.5]
+    rotation: [-180, 180]
+  horizontal_flip:
+    p: 0.5
+  vertical_flip:
+    p: 0.5
+  color_jitter:
+    brightness: 0.5
+    contrast: 0.5
+    saturation: 0.3
+    hue: 0.1
+    p: 0.9
+  mask_vignette:
+    steepness: 0
+    midpoint: 0.2

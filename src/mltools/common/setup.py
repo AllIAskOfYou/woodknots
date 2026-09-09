@@ -26,15 +26,20 @@ def compose_with_hydra_config(overrides: list[str]):
     return cfg
 
 
-def collect_dataset_variants(framework_dir: Path) -> dict:
-    """Compose each experiment's config and collect unique dataset definitions."""
+def collect_dataset_variants(framework_dir: Path, exclude_keys: list[str] | None = None) -> dict:
+    """Compose each experiment's config and collect unique dataset definitions.
+
+    exclude_keys is forwarded to hash_cfg — must match whatever a framework's
+    own train.py/evaluate.py pass to hash_cfg(cfg.dataset) when resolving
+    get_dataset_dir, or the directory this builds and the directory training
+    looks up will disagree."""
     variants = {}  # key: dedup key (e.g. resolution) -> resolved dataset cfg
 
     config_dir = str((framework_dir / "conf").resolve())
     with initialize_config_dir(config_dir=config_dir, version_base=None):
         for exp_name in get_experiment_names(framework_dir):
             cfg = compose(config_name="config", overrides=[f"experiment={exp_name}"])
-            ds_hash = hash_cfg(cfg.dataset)
+            ds_hash = hash_cfg(cfg.dataset, exclude_keys=exclude_keys)
             if ds_hash not in variants:
                 variants[ds_hash] = cfg.dataset
 

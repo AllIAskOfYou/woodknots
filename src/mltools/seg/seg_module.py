@@ -6,11 +6,11 @@ import torch
 import numpy as np
 
 from mltools.seg.losses import SegLoss
-from mltools.seg.schema import ModuleConfig
-from mltools.seg.metrics import DiceScore, IoUScore, GMSScore
+from mltools.common.metrics import DiceScore, IoUScore, GMSScore
 from pathlib import Path
 
-from mltools.seg.module.dinov3 import DINOv3FPN, DINOv3MAnet
+from omegaconf import DictConfig
+
 
 def denormalize_image(image_tensor):
     # Assuming the image was normalized using ImageNet stats
@@ -23,11 +23,9 @@ def denormalize_image(image_tensor):
 
 
 class SegModule(L.LightningModule):
-    def __init__(self, module_cfg: ModuleConfig):
+    def __init__(self, module_cfg: DictConfig):
         super().__init__()
-        # self.model = DINOv3FPN(out_channels=256, num_classes=1)
-        self.model = DINOv3MAnet(num_classes=1)
-        # self.model = instantiate(module_cfg.model)
+        self.model = instantiate(module_cfg.model)
         # freeze encoder layers
         if module_cfg.freeze_encoder:
             self.freeze_encoder()
@@ -35,10 +33,8 @@ class SegModule(L.LightningModule):
         self.loss = SegLoss(start_weight=0.5, end_weight=0.5, labels_smoothing=module_cfg.loss.labels_smoothing)
         self.save_hyperparameters(module_cfg)
         self.metrics = {
-            "dice": DiceScore(soft=False, background=True, average="macro"),
-            "dice_nobg": DiceScore(soft=False, background=False, average="macro"),
-            "dice_soft": DiceScore(soft=True, background=True, average="macro"),
-            "iou": IoUScore(soft=False, background=True, average="macro"),
+            "dice": DiceScore(soft=False, average="macro"),
+            "iou": IoUScore(soft=False, average="macro"),
             "gms": GMSScore(average="macro"),
         }
         self.should_validate = True
@@ -93,7 +89,7 @@ class SegModule(L.LightningModule):
             on_step=False,
         )
         return loss
-    
+
     def on_validation_epoch_start(self):
         # Skip validation for first 2 epochs
         if self.current_epoch < 3:
@@ -103,7 +99,7 @@ class SegModule(L.LightningModule):
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int):
         if not self.should_validate:
-            # return dummy val_dice for checkpointing to work        
+            # return dummy val_dice for checkpointing to work
             for name in self.metrics:
                 self.log(
                     f"val_{name}",
@@ -113,7 +109,7 @@ class SegModule(L.LightningModule):
                     on_step=False,
                 )
             return
-        
+
         images, masks = batch
         res = self.cfg.resolution
         with torch.no_grad():
@@ -171,12 +167,11 @@ class SegModule(L.LightningModule):
             weight_decay=self.cfg.optimizer.weight_decay
         )
         total_steps = self.trainer.estimated_stepping_batches
-        
+
         scheduler = instantiate(
             self.cfg.scheduler,
             optimizer=optimizer,
             total_iters=total_steps,
-            # total_iters=int(self.cfg.total_epochs * 0.5),
         )
         return {
             "optimizer": optimizer,

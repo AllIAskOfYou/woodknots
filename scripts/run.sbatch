@@ -37,6 +37,7 @@ run_cluster() {
         export RANK=-1
         export LOCAL_RANK=-1
         export WORLD_SIZE=1
+        export PYTHONUNBUFFERED=1
         unset MASTER_ADDR MASTER_PORT
         uv run ${FRAMEWORK}/run.py experiment=${EXPERIMENT} experiment.fold=${FOLD}
     "

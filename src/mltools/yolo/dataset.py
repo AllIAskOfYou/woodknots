@@ -112,7 +112,7 @@ def _process_case(
     mask = np.zeros((img_h, img_w, num_classes), dtype=np.float32)
     for ann in anns:
         cat_name = coco_ds.coco.loadCats(ann["category_id"])[0]["name"]
-        confidence = float(ann.get("attributes", {}).get("confidance", 1.0))
+        confidence = float(ann.get("attributes", {}).get("confidence", 1.0))
         class_indices = classify_annotation(cat_name, confidence, label_cfg, names_to_idx)
         for class_idx in class_indices:
             yolo_lines.extend(get_yolo_line(ann, img_w, img_h, class_idx))

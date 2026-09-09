@@ -23,7 +23,7 @@ def get_cosine_schedule_with_warmup(
         # 1. Linear warmup phase
         if current_step < num_warmup_steps:
             return float(current_step) / float(max(1, num_warmup_steps))
-        
+
         # 2. Cosine decay phase
         progress = float(current_step - num_warmup_steps) / float(
             max(1, total_iters - num_warmup_steps)
@@ -31,5 +31,5 @@ def get_cosine_schedule_with_warmup(
         # Cosine annealing calculation (0.5 * (1 + cos(pi * progress))
         cosine_lr_multiple = 0.5 * (1.0 + math.cos(math.pi * num_cycles * 2.0 * progress))
         return max(0.0, cosine_lr_multiple)
-    
+
     return LambdaLR(optimizer, lr_lambda, last_epoch)

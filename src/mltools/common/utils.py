@@ -9,9 +9,25 @@ def hash_string(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:8]
 
 
-def hash_cfg(cfg: DictConfig) -> str:
-    """Generate an 8 digit hex hash of a DictConfig."""
-    yaml = OmegaConf.to_yaml(cfg, resolve=True, sort_keys=True)
+def hash_cfg(cfg: DictConfig, exclude_keys: list[str] | None = None) -> str:
+    """Generate an 8 digit hex hash of a DictConfig.
+
+    exclude_keys drops top-level keys before hashing — for a framework whose
+    dataset-prep pipeline doesn't consume every field of the shared
+    dataset: config group (e.g. folds/class_names, which only affect
+    fold-splitting/training, not what gets written to the formatted dataset
+    dir), including them in the hash would mean an unrelated change (e.g.
+    switching folds files) spuriously invalidates an already-built,
+    byte-identical dataset directory. Defaults to hashing everything, so
+    existing callers/cached directories are unaffected."""
+    # Resolve interpolations first, while cfg still has its full parent
+    # config tree for context (e.g. data_root: ${paths.data_root}) — a
+    # filtered-then-resolved DictConfig built from a subset of keys would
+    # lose that outer context and fail to resolve.
+    resolved = OmegaConf.to_container(cfg, resolve=True)
+    if exclude_keys:
+        resolved = {k: v for k, v in resolved.items() if k not in exclude_keys}
+    yaml = OmegaConf.to_yaml(OmegaConf.create(resolved), sort_keys=True)
     return hash_string(yaml)
 
 
