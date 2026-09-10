@@ -3,6 +3,17 @@ import cv2
 import numpy as np
 from omegaconf import DictConfig
 
+# Converts normalized ElasticTransform alpha/sigma into pixels, with
+#   f = resolution * ELASTIC_NORMALIZATION:
+#   true_sigma = sigma * f
+#   true_alpha = alpha * f**2
+# sigma is a correlation length, so it scales linearly with the image. alpha
+# is squared because albumentations normalizes the blurred displacement
+# field: the resulting shift is proportional to alpha/sigma, so keeping the
+# warp visually identical across resolutions needs alpha to grow one power
+# faster than sigma.
+ELASTIC_NORMALIZATION = 0.02
+
 
 def rotate_if_portrait(data, **kwargs):
     h, w = data.shape[:2]
@@ -129,10 +140,21 @@ def get_train_transform(cfg: DictConfig):
         "p": 1.0,
     }
 
-    # Common distortion transforms
+    # Common distortion transforms.
+    # ElasticTransform's alpha/sigma are pixel-space in albumentations, so a
+    # resolution change would silently change how strong the warp looks.
+    # They're configured in normalized units instead and scaled here, so the
+    # same config means the same visual deformation at any resolution.
+    # GridDistortion needs no equivalent — num_steps is a count and
+    # distort_limit is a fraction of cell size, both already scale-free.
+    elastic = dict(cfg.distortion.elastic)
+    elastic_scale = cfg.resolution * ELASTIC_NORMALIZATION
+    elastic["alpha"] = elastic["alpha"] * elastic_scale**2
+    elastic["sigma"] = elastic["sigma"] * elastic_scale
+
     distortion_transforms = A.OneOf(
         [
-            A.ElasticTransform(**cfg.distortion.elastic, p=1.0),
+            A.ElasticTransform(**elastic, p=1.0),
             A.GridDistortion(
                 **cfg.distortion.grid,
                 p=cfg.distortion.e2g_ratio,

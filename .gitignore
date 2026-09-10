@@ -18,3 +18,4 @@ results/
 results_sc/
 **/*.sqsh
 sc_uv.lock
+article/

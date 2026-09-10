@@ -35,8 +35,15 @@ augmentation:
   mosaic_p: 0.5
   distortion:
     elastic:
-      alpha: 100.0
-      sigma: 10.0
+      # normalized units, resolution-independent (see transforms.py), with
+      # f = resolution * 0.02:
+      #   true_sigma = sigma * f
+      #   true_alpha = alpha * f**2
+      # res  256 -> alpha  26.21, sigma  5.12
+      # res  512 -> alpha 104.86, sigma 10.24
+      # res 1024 -> alpha 419.43, sigma 20.48
+      alpha: 1.0
+      sigma: 1.0
     grid:
       num_steps: 5
       distort_limit: 0.3

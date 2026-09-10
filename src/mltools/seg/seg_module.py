@@ -6,10 +6,13 @@ import torch
 import numpy as np
 
 from mltools.seg.losses import SegLoss
+from mltools.common.logger import get_logger
 from mltools.common.metrics import DiceScore, IoUScore, GMSScore
 from pathlib import Path
 
 from omegaconf import DictConfig
+
+logger = get_logger(__name__)
 
 
 def denormalize_image(image_tensor):
@@ -32,10 +35,16 @@ class SegModule(L.LightningModule):
         self.cfg = module_cfg
         self.loss = SegLoss(start_weight=0.5, end_weight=0.5, labels_smoothing=module_cfg.loss.labels_smoothing)
         self.save_hyperparameters(module_cfg)
+        # This module emits a single foreground channel, so background=True
+        # synthesises the background channel these metrics average over —
+        # reproducing the metric definitions the pre-restructure runs used
+        # (val_dice here is background-inclusive; val_dice_nobg is not).
         self.metrics = {
-            "dice": DiceScore(soft=False, average="macro"),
-            "iou": IoUScore(soft=False, average="macro"),
-            "gms": GMSScore(average="macro"),
+            "dice": DiceScore(soft=False, background=True, average="macro"),
+            #"dice_nobg": DiceScore(soft=False, background=False, average="macro"),
+            #"dice_soft": DiceScore(soft=True, background=True, average="macro"),
+            "iou": IoUScore(soft=False, background=True, average="macro"),
+            "gms": GMSScore(background=True, average="macro"),
         }
         self.should_validate = True
 
@@ -96,6 +105,30 @@ class SegModule(L.LightningModule):
             self.should_validate = False
         else:
             self.should_validate = True
+
+    def on_validation_epoch_end(self):
+        """Lightning's progress bar is the only thing that normally surfaces
+        these numbers, and rich suppresses it entirely when stdout isn't a
+        TTY (i.e. every sbatch job), so log one line per epoch instead —
+        stdlib logging reaches both the SLURM .out and Hydra's run.log.
+        Built from callback_metrics so it follows whatever self.metrics holds."""
+        if self.trainer.sanity_checking:
+            return
+        metrics = self.trainer.callback_metrics
+
+        def fmt(keys):
+            return " ".join(
+                f"{k}={float(metrics[k]):.4f}" for k in keys if k in metrics
+            )
+
+        parts = [f"epoch={self.current_epoch}"]
+        for prefix in ("train", "val"):
+            line = fmt([f"{prefix}_loss"] + [f"{prefix}_{n}" for n in self.metrics])
+            if line:
+                parts.append(line)
+        if "lr" in metrics:
+            parts.append(f"lr={float(metrics['lr']):.2e}")
+        logger.info(" | ".join(parts))
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int):
         if not self.should_validate:

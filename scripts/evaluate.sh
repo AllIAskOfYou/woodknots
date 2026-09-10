@@ -41,7 +41,7 @@ run_local() {
 }
 
 run_cluster() {
-    job_name="${FRAMEWORK}-${EXPERIMENT}-fold_${FOLD}"
+    job_name="eval-${FRAMEWORK}-${EXPERIMENT}-fold_${FOLD}"
     echo "Submitting ${job_name}"
     sbatch --job-name="${job_name}" \
         --output="slurm_logs/${job_name}/%j.out" \

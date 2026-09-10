@@ -157,6 +157,11 @@ def train(cfg: DictConfig) -> None:
         callbacks=[checkpoint_callback],
         check_val_every_n_epoch=1,
         logger=tb_logger,
+        # rich (installed, so Lightning picks RichProgressBar) renders nothing
+        # at all when stdout isn't a TTY, which is every sbatch job — so the
+        # bar is dead weight here. SegModule.on_validation_epoch_end logs the
+        # per-epoch metrics instead.
+        enable_progress_bar=False,
     )
     trainer.fit(module, train_dataloader, val_dataloader)
     logger.info(f"{tag} Training complete.")
