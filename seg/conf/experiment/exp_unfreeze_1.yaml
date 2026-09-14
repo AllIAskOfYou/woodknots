@@ -1,0 +1,13 @@
+# @package _global_
+# fully unfrozen encoder
+# Derived from exp_reference: only encoder freezing differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  freeze_encoder: false
+  optimizer:
+    encoder_lr: 1.0e-5   # 10x below the decoder lr, standard for fine-tuning
+    encoder_weight_decay: 0.05

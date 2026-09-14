@@ -1,0 +1,11 @@
+# @package _global_
+# weight decay 1.0 -> 0.01 (the usual AdamW default)
+# Derived from exp_reference: only optimizer.weight_decay differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  optimizer:
+    weight_decay: 0.01

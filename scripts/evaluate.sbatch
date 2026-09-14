@@ -1,7 +1,4 @@
 #!/bin/bash
-# drop SBATCH --gres=gpu:GH200:1
-# drop SBATCH --partition=nxt
-# drop SBATCH --constraint=GPU_GEN:HOPPER
 # drop SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 #SBATCH --time=00:30:00
@@ -37,7 +34,11 @@ run_cluster() {
         enroot remove -f "${container_name}"
     fi
 
-    trap 'enroot remove -f "${container_name}" 2>/dev/null || true' EXIT
+    # Double quotes: container_name is `local`, so it must be expanded now,
+    # while it is still in scope. With single quotes the trap body is evaluated
+    # at script exit, after run_cluster has returned, and dies under `set -u`
+    # with "container_name: unbound variable" -- leaving the container behind.
+    trap "enroot remove -f '${container_name}' 2>/dev/null || true" EXIT
 
     enroot create --name "${container_name}" ./containers/base.sqsh
     enroot start \

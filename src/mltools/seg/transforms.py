@@ -176,7 +176,10 @@ def get_train_transform(cfg: DictConfig):
             ),
             A.ColorJitter(**cfg.color_jitter),
             distortion_transforms,
-            A.Rotate(limit=(-25, 25), p=1.0),
+            # Separate from random_crop.rotation (used by the non-mosaic
+            # branch): this was hardcoded to +-25 and existing results depend
+            # on it, so the default preserves that exactly.
+            A.Rotate(limit=tuple(cfg.mosaic_rotation), p=1.0),
             A.RandomSizedCrop(**crop_params),
         ],
         p=cfg.mosaic_p,

@@ -212,11 +212,19 @@ def predict(cfg: DictConfig) -> None:
     gt_dir.mkdir(parents=True, exist_ok=True)
 
     class_groups = cfg.train.class_groups
+    # Same preprocessing SegDataset applies during training/validation, so the
+    # model is evaluated on the input distribution it was trained on. An
+    # identity when preprocessing.mask_image is null.
+    preprocessing = get_preprocessing_transform(cfg.train.preprocessing)
     logger.info(
         f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating validation predictions..."
     )
     for case_id in val_cases:
         image, label = load_case(dataset_dir, case_id)
+        # label is still the full multi-channel stack here, so channel indices
+        # in preprocessing refer to the same channels as in training. Only the
+        # image is taken; the ground truth written below stays unmasked.
+        image = preprocessing(image=image, mask=label)["image"]
 
         transformed = INFERENCE_TRANSFORM(image=image)
         image_t = transformed["image"].unsqueeze(0).to(device)

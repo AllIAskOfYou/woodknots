@@ -1,0 +1,11 @@
+# @package _global_
+# linear LR decay after warmup (reference: cosine decay)
+# Derived from exp_reference: only the scheduler decay shape differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  scheduler:
+    _target_: mltools.seg.scheduler.get_linear_schedule_with_warmup

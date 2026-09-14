@@ -1,0 +1,15 @@
+# @package _global_
+# minimal colour jitter (probability unchanged)
+# Derived from exp_reference: only color_jitter magnitude differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  augmentation:
+    color_jitter:
+      brightness: 0.1  # 0.5
+      contrast: 0.1    # 0.5
+      saturation: 0.05 # 0.3
+      hue: 0.02        # 0.1

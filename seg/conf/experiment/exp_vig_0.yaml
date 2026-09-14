@@ -1,0 +1,12 @@
+# @package _global_
+# mask vignette enabled (reference: steepness 0 = disabled)
+# Derived from exp_reference: only mask_vignette differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  augmentation:
+    mask_vignette:
+      steepness: 10.0  # midpoint stays 0.2

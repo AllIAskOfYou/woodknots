@@ -1,11 +1,19 @@
 import os
 
+import cv2
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dotenv import load_dotenv
-from transformers import DINOv3ConvNextBackbone
+from transformers import (
+    ConvNextBackbone,
+    DINOv3ConvNextBackbone,
+    Mask2FormerConfig,
+    Mask2FormerForUniversalSegmentation,
+)
 from segmentation_models_pytorch.decoders.manet.model import MAnetDecoder
+from segmentation_models_pytorch.decoders.upernet.decoder import UPerNetDecoder
 
 load_dotenv()
 
@@ -51,6 +59,13 @@ class DINOv3FPN(nn.Module):
 
         self.head = nn.Conv2d(out_channels, num_classes, kernel_size=1)
 
+    def get_decoder_parameters(self):
+        params = []
+        params.extend(list(self.lateral_layers.parameters()))
+        params.extend(list(self.smooth_layers.parameters()))
+        params.extend(list(self.head.parameters()))
+        return params
+
     def forward(self, x):
         input_size = x.shape[-2:]
         features = self.encoder(x).feature_maps  # list of 4 tensors
@@ -75,17 +90,22 @@ class DINOv3FPN(nn.Module):
 
 
 class DINOv3MAnet(nn.Module):
-    def __init__(self, num_classes=1):
-        super().__init__()
+    # ConvNeXt-Large stage output channels, at strides 4/8/16/32.
+    ENCODER_CHANNELS = [192, 384, 768, 1536]
 
-        # 1. DINOv3 backbone
-        self.encoder = DINOv3ConvNextBackbone.from_pretrained(
+    def _build_encoder(self):
+        return DINOv3ConvNextBackbone.from_pretrained(
             "facebook/dinov3-convnext-large-pretrain-lvd1689m",
             out_indices=[1, 2, 3, 4],
             token=_hf_token(),
         )
-        # ConvNeXt-Large stage output channels
-        encoder_channels = [192, 384, 768, 1536]
+
+    def __init__(self, num_classes=1):
+        super().__init__()
+
+        # 1. DINOv3 backbone
+        self.encoder = self._build_encoder()
+        encoder_channels = self.ENCODER_CHANNELS
 
         # 2. SMP's internal decoder
         decoder_channels = (256, 128, 64, 32)
@@ -133,3 +153,278 @@ class DINOv3MAnet(nn.Module):
         upsampled_output = F.interpolate(decoder_output, size=x.shape[-2:], mode='bilinear', align_corners=False)
 
         return self.segmentation_head(upsampled_output)
+
+
+class ConvNeXtMAnet(DINOv3MAnet):
+    """DINOv3MAnet with supervised ImageNet weights instead of DINOv3's
+    self-supervised LVD-1689M ones.
+
+    Same ConvNeXt-Large architecture and stage widths, same decoder, same head
+    — the pretraining is the only thing that differs, which is what makes this
+    a control for "does DINOv3 pretraining actually buy anything here". Not a
+    gated repo, so no HF token is needed.
+    """
+
+    def _build_encoder(self):
+        encoder = ConvNextBackbone.from_pretrained(
+            "facebook/convnext-large-224-22k-1k",
+            out_indices=[1, 2, 3, 4],
+        )
+        channels = list(encoder.channels)
+        if channels != self.ENCODER_CHANNELS:
+            raise ValueError(
+                f"encoder stage widths {channels} do not match the decoder's "
+                f"{self.ENCODER_CHANNELS}; pick a ConvNeXt-Large checkpoint."
+            )
+        return encoder
+
+
+class DINOv3UPerNet(nn.Module):
+    """Same DINOv3 ConvNeXt-Large backbone as DINOv3MAnet, with UPerNet's
+    PSP + FPN decoder instead of MAnet's. Drop-in alternative for
+    train.model._target_."""
+
+    def __init__(self, num_classes=1, decoder_channels=256):
+        super().__init__()
+
+        self.encoder = DINOv3ConvNextBackbone.from_pretrained(
+            "facebook/dinov3-convnext-large-pretrain-lvd1689m",
+            out_indices=[1, 2, 3, 4],
+            token=_hf_token(),
+        )
+        # ConvNeXt-Large stage output channels, at strides 4/8/16/32
+        encoder_channels = [192, 384, 768, 1536]
+
+        # UPerNetDecoder is written against smp's encoder convention, where
+        # features run [1/1, 1/2, 1/4, ...] and it discards the first two
+        # itself. This backbone only emits 1/4 downwards, so pad both the
+        # channel list and (in forward) the feature list with placeholders
+        # that land in the slice the decoder throws away.
+        self.decoder = UPerNetDecoder(
+            encoder_channels=[0, 0, *encoder_channels],
+            encoder_depth=5,
+            decoder_channels=decoder_channels,
+        )
+
+        # UPerNet's decoder output is 1/4 resolution with decoder_channels
+        # channels, so classify first and upsample the logits — upsampling
+        # 256 channels to full resolution before the head would cost ~16x
+        # the activation memory for no benefit.
+        self.segmentation_head = nn.Sequential(
+            nn.Conv2d(decoder_channels, decoder_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(decoder_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(decoder_channels, num_classes, kernel_size=1),
+        )
+
+    def get_encoder_parameters(self, stages=[2, 3]):
+        params = []
+        for name, param in self.encoder.named_parameters():
+            if any(f"stages.{stage}" in name for stage in stages):
+                params.append(param)
+        return params
+
+    def unfreeze_encoder_stages(self, stages=[2, 3]):
+        params = self.get_encoder_parameters(stages)
+        for param in params:
+            param.requires_grad = True
+
+    def get_decoder_parameters(self):
+        params = []
+        params.extend(list(self.decoder.parameters()))
+        params.extend(list(self.segmentation_head.parameters()))
+        return params
+
+    def forward(self, x):
+        features = self.encoder(x).feature_maps
+        decoder_output = self.decoder([None, None, *features])
+        logits = self.segmentation_head(decoder_output)
+        return F.interpolate(
+            logits, size=x.shape[-2:], mode="bilinear", align_corners=False
+        )
+
+
+class DINOv3Mask2Former(nn.Module):
+    """DINOv3 ConvNeXt-Large backbone with Mask2Former's query-based mask
+    decoder.
+
+    Unlike the dense decoders above, Mask2Former is a set-prediction model:
+    it computes its own Hungarian-matched loss from per-instance mask/class
+    targets rather than a per-pixel one. It therefore opts out of SegLoss via
+    `computes_own_loss`, and SegModule calls compute_loss() instead. forward()
+    still returns dense per-pixel logits, so the metrics, sliding-window
+    inference and predict() all keep working unchanged.
+
+    Targets are thresholded at mask_threshold and split into objects with
+    connected components (see _build_targets) — the soft confidence values
+    (0.2/0.6/1.0) the dense decoders train against are not representable in
+    this formulation.
+    """
+
+    computes_own_loss = True
+
+    def __init__(
+        self,
+        num_classes=1,
+        num_queries=100,
+        mask_threshold=0.5,
+        hidden_dim=256,
+        decoder_layers=10,
+        encoder_layers=6,
+        dim_feedforward=2048,
+        encoder_feedforward_dim=1024,
+        feature_size=256,
+        mask_feature_size=256,
+        no_object_weight=0.1,
+    ):
+        """Capacity knobs are exposed because the defaults are Mask2Former's,
+        tuned for COCO/ADE20K-scale data; on a few hundred training images the
+        decoder overfits badly. hidden_dim, feature_size and mask_feature_size
+        may differ from one another — the model inserts an input projection
+        when feature_size != hidden_dim and an MLP for hidden_dim ->
+        mask_feature_size — but hidden_dim and feature_size must stay
+        divisible by num_attention_heads (8).
+
+        config.dropout is deliberately left at 0 and not exposed: transformers
+        wires it to LayerDrop as well as to ordinary dropout, and the LayerDrop
+        path is broken for this architecture. Skipping a decoder layer bypasses
+        the regeneration of the cross-attention mask while level_index keeps
+        advancing, so the next layer attends a feature level whose resolution
+        no longer matches its mask and dies on a shape mismatch.
+        """
+        super().__init__()
+
+        backbone = DINOv3ConvNextBackbone.from_pretrained(
+            "facebook/dinov3-convnext-large-pretrain-lvd1689m",
+            out_indices=[1, 2, 3, 4],
+            token=_hf_token(),
+        )
+        config = Mask2FormerConfig(
+            backbone_config=backbone.config,
+            num_labels=num_classes,
+            num_queries=num_queries,
+            feature_strides=(4, 8, 16, 32),
+            hidden_dim=hidden_dim,
+            decoder_layers=decoder_layers,
+            encoder_layers=encoder_layers,
+            dim_feedforward=dim_feedforward,
+            encoder_feedforward_dim=encoder_feedforward_dim,
+            feature_size=feature_size,
+            mask_feature_size=mask_feature_size,
+            # Weight of the "no object" class in the classification loss.
+            # The 0.1 default is tuned for COCO/ADE20K, where nearly every
+            # image contains objects; here 31% of images have no knots at all
+            # and the model fires spurious queries on more than half of them,
+            # so raising this is the direct lever on false positives.
+            no_object_weight=no_object_weight,
+        )
+        self.model = Mask2FormerForUniversalSegmentation(config)
+        # Mask2FormerPixelLevelModule builds its backbone via
+        # load_backbone(config), which initialises it randomly from the config
+        # — swap in the pretrained DINOv3 weights. Safe because the pixel
+        # decoder is sized from encoder.channels, identical either way since
+        # both come from the same config.
+        self.model.model.pixel_level_module.encoder = backbone
+
+        self.num_classes = num_classes
+        self.mask_threshold = mask_threshold
+
+    @property
+    def encoder(self):
+        """SegModule.freeze_encoder()/unfreeze_encoder() reach for .encoder."""
+        return self.model.model.pixel_level_module.encoder
+
+    def get_encoder_parameters(self, stages=[2, 3]):
+        params = []
+        for name, param in self.encoder.named_parameters():
+            if any(f"stages.{stage}" in name for stage in stages):
+                params.append(param)
+        return params
+
+    def unfreeze_encoder_stages(self, stages=[2, 3]):
+        for param in self.get_encoder_parameters(stages):
+            param.requires_grad = True
+
+    def get_decoder_parameters(self):
+        encoder_params = {id(p) for p in self.encoder.parameters()}
+        return [p for p in self.model.parameters() if id(p) not in encoder_params]
+
+    def _build_targets(self, targets):
+        """(B, C, H, W) soft masks -> the per-image mask/class lists
+        Mask2Former's matcher expects — one target per *object*, which is
+        what makes the set-prediction formulation worth anything.
+
+        The formatted dataset max-merges every annotation of a class into a
+        single channel, so instances are recovered with connected components
+        on the thresholded mask. That splits any objects which don't touch:
+        measured against the raw COCO annotations, only ~7% of wood knots
+        have even a bbox-overlapping neighbour (and overlapping boxes often
+        still have disjoint masks), so the large majority come back separate.
+        Objects that genuinely touch stay merged, as they already do for the
+        connected-components GMS metric.
+
+        Images with no foreground contribute empty tensors, which the matcher
+        handles as "every query should predict no-object".
+        """
+        binary = (targets > self.mask_threshold).detach().cpu().numpy().astype(np.uint8)
+        device = targets.device
+        spatial = binary.shape[-2:]
+
+        mask_labels, class_labels = [], []
+        for sample in binary:
+            masks, labels = [], []
+            for class_idx in range(self.num_classes):
+                count, components = cv2.connectedComponents(
+                    sample[class_idx], connectivity=8
+                )
+                for instance in range(1, count):  # component 0 is background
+                    masks.append(components == instance)
+                    labels.append(class_idx)
+            if masks:
+                mask_labels.append(
+                    torch.from_numpy(np.stack(masks)).float().to(device)
+                )
+                class_labels.append(
+                    torch.tensor(labels, dtype=torch.long, device=device)
+                )
+            else:
+                mask_labels.append(
+                    torch.zeros((0, *spatial), dtype=torch.float, device=device)
+                )
+                class_labels.append(
+                    torch.zeros((0,), dtype=torch.long, device=device)
+                )
+        return mask_labels, class_labels
+
+    def _dense_logits(self, outputs, size):
+        """Collapse the query predictions into a dense per-pixel map (the
+        standard Mask2Former semantic-inference rule), then convert back to
+        logits — everything downstream (SegModule.forward's sigmoid, the
+        metrics' `> 0.0` threshold) assumes logits, not probabilities."""
+        masks = F.interpolate(
+            outputs.masks_queries_logits, size=size, mode="bilinear", align_corners=False
+        )
+        mask_probs = masks.sigmoid()
+        # drop the trailing no-object logit
+        class_probs = outputs.class_queries_logits.softmax(dim=-1)[..., :-1]
+        semseg = torch.einsum("bqc,bqhw->bchw", class_probs, mask_probs)
+        eps = torch.finfo(semseg.dtype).eps
+        return torch.logit(semseg.clamp(eps, 1 - eps))
+
+    def compute_loss(self, images, targets):
+        """Returns (loss, dense_logits) so the caller gets both from a single
+        forward pass — the loss needs the query outputs, the metrics need the
+        dense map."""
+        mask_labels, class_labels = self._build_targets(targets)
+        outputs = self.model(
+            pixel_values=images, mask_labels=mask_labels, class_labels=class_labels
+        )
+        # The dense map only feeds the metrics, which detach anyway — building
+        # it inside the graph would retain a (B, Q, H, W) interpolation and its
+        # sigmoid for a backward pass that never traverses them.
+        with torch.no_grad():
+            logits = self._dense_logits(outputs, images.shape[-2:])
+        return outputs.loss, logits
+
+    def forward(self, x):
+        return self._dense_logits(self.model(pixel_values=x), x.shape[-2:])

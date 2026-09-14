@@ -1,12 +1,13 @@
 class_name: wood_knot
-class_groups: null
-  # - value: 1.0
-    # classes: [0.2, 0.6, 1.0]
+class_groups:
+  - value: 1.0
+    classes: [0.2, 0.6, 1.0]
 
 resolution: ${dataset.resolution}
 total_epochs: 100
 batch_size: 20
 freeze_encoder: true
+unfreeze_stages: null   # e.g. [3] to fine-tune only the deepest ConvNeXt stage
 
 model:
   _target_: mltools.seg.dinov3.DINOv3MAnet
@@ -14,7 +15,9 @@ model:
 
 optimizer:
   lr: 1.0e-4
+  encoder_lr: null   # null = same as lr; only used when the encoder is unfrozen
   weight_decay: 1.0
+  encoder_weight_decay: null   # null = same as weight_decay; only used when the encoder is unfrozen
 
 scheduler:
   _target_: mltools.seg.scheduler.get_cosine_schedule_with_warmup
@@ -33,6 +36,7 @@ augmentation:
   resolution: ${train.resolution}
   w2h_ratio: 1.0
   mosaic_p: 0.5
+  mosaic_rotation: [-25, 25]   # mosaic branch; random_crop.rotation is the non-mosaic branch
   distortion:
     elastic:
       # normalized units, resolution-independent (see transforms.py), with

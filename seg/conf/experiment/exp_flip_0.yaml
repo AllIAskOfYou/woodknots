@@ -1,0 +1,14 @@
+# @package _global_
+# no flips (reference: horizontal and vertical, p=0.5 each)
+# Derived from exp_reference: only flipping differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  augmentation:
+    horizontal_flip:
+      p: 0.0
+    vertical_flip:
+      p: 0.0

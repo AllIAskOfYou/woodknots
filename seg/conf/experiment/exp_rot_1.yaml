@@ -1,0 +1,13 @@
+# @package _global_
+# rotation limited to +-30 in both augmentation branches
+# Derived from exp_reference: only rotation (both branches) differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  augmentation:
+    random_crop:
+      rotation: [-30, 30]     # non-mosaic branch, reference [-180, 180]
+    mosaic_rotation: [-10, 10] # mosaic branch, reference [-10, 10]

@@ -1,0 +1,11 @@
+# @package _global_
+# no label smoothing (reference: 0.05)
+# Derived from exp_reference: only loss.labels_smoothing differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  loss:
+    labels_smoothing: 0.0

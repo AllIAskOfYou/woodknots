@@ -1,0 +1,15 @@
+# @package _global_
+# weaker distortion: elastic displacement and grid distortion halved
+# Derived from exp_reference: only distortion magnitude (probability unchanged) differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  augmentation:
+    distortion:
+      elastic:
+        alpha: 0.5          # 1.0 -> 0.5, halves displacement (sigma unchanged)
+      grid:
+        distort_limit: 0.15 # 0.3 -> 0.15

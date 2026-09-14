@@ -1,0 +1,13 @@
+# @package _global_
+# supervised ImageNet-22k->1k ConvNeXt-Large instead of DINOv3's
+# self-supervised LVD-1689M weights; same architecture, decoder and freezing
+# Derived from exp_reference: only the encoder's pretraining differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  model:
+    _target_: mltools.seg.dinov3.ConvNeXtMAnet
+    num_classes: 1

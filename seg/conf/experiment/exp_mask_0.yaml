@@ -1,0 +1,18 @@
+# @package _global_
+# Image masked to the primary_log region (+20 px band) during training,
+# validation and prediction.
+# Derived from exp_reference: only preprocessing.mask_image differs.
+#
+# ORACLE: the mask comes from the ground-truth primary_log annotation, so the
+# model is told where the log is at inference. Treat the result as an upper
+# bound on log-region masking, not as a deployable number.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  preprocessing:
+    mask_image:
+      channel_index: 0 # primary_log (metadata.json: [primary_log, wood_knot])
+      distance: 20     # px kept outside the log boundary, edge blurred

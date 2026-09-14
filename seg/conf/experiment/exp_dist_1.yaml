@@ -1,0 +1,15 @@
+# @package _global_
+# stronger distortion: elastic displacement x2, grid distortion 0.3 -> 0.5
+# Derived from exp_reference: only distortion magnitude (probability unchanged) differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  augmentation:
+    distortion:
+      elastic:
+        alpha: 2.0          # 1.0 -> 2.0, doubles displacement (sigma unchanged)
+      grid:
+        distort_limit: 0.5  # 0.3 -> 0.5; beyond ~0.5 the grid starts folding

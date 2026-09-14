@@ -32,6 +32,14 @@ class SegModule(L.LightningModule):
         # freeze encoder layers
         if module_cfg.freeze_encoder:
             self.freeze_encoder()
+        # Selectively re-enable the deepest stages for fine-tuning. Applied
+        # after freeze_encoder so `unfreeze_stages: [3]` means "freeze
+        # everything except the last stage"; the encoder is put back in train
+        # mode, since freeze_encoder() also called .eval() on it.
+        unfreeze_stages = module_cfg.get("unfreeze_stages", None)
+        if unfreeze_stages:
+            self.model.encoder.train()
+            self.model.unfreeze_encoder_stages(list(unfreeze_stages))
         self.cfg = module_cfg
         self.loss = SegLoss(start_weight=0.5, end_weight=0.5, labels_smoothing=module_cfg.loss.labels_smoothing)
         self.save_hyperparameters(module_cfg)
@@ -75,11 +83,22 @@ class SegModule(L.LightningModule):
         preds = torch.sigmoid(outputs)
         return preds
 
+    @property
+    def _model_computes_loss(self) -> bool:
+        """Set-prediction models (Mask2Former) compute a Hungarian-matched
+        loss internally from per-instance targets, so SegLoss doesn't apply
+        to them; they expose compute_loss() and return dense logits from
+        forward() for the metrics."""
+        return getattr(self.model, "computes_own_loss", False)
+
     def training_step(self, batch: torch.Tensor, batch_idx: int):
         images, masks = batch
-        outputs = self.model(images)
-        self.loss.update_weight(batch_idx, self.trainer.estimated_stepping_batches)
-        loss = self.loss(outputs, masks)
+        if self._model_computes_loss:
+            loss, outputs = self.model.compute_loss(images, masks)
+        else:
+            outputs = self.model(images)
+            self.loss.update_weight(batch_idx, self.trainer.estimated_stepping_batches)
+            loss = self.loss(outputs, masks)
         self.log("train_loss", loss, prog_bar=True, on_epoch=True, on_step=False)
         for name in self.metrics:
             metric = self.metrics[name]
@@ -179,7 +198,14 @@ class SegModule(L.LightningModule):
             cv2.imwrite(sample_dir / f"image_{batch_idx}.png", image_long)
             cv2.imwrite(sample_dir / f"output_{batch_idx}.png", output_long)
 
-        loss = self.loss(outputs, masks)
+        if self._model_computes_loss:
+            # The sliding-window output is a stitched dense map, so the
+            # query-based loss can't be recovered from it — run the model's
+            # own loss over the full image instead. Metrics still come from
+            # the sliding-window logits above, matching inference.
+            loss, _ = self.model.compute_loss(images, masks)
+        else:
+            loss = self.loss(outputs, masks)
         self.log("val_loss", loss, prog_bar=True)
 
         for name in self.metrics:
@@ -193,12 +219,29 @@ class SegModule(L.LightningModule):
             )
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(
-            params=[
-                {"params": self.model.get_decoder_parameters(), "lr": self.cfg.optimizer.lr},
-            ],
-            weight_decay=self.cfg.optimizer.weight_decay
-        )
+        lr = self.cfg.optimizer.lr
+        weight_decay = self.cfg.optimizer.weight_decay
+        param_groups = [
+            {"params": self.model.get_decoder_parameters(), "lr": lr, "weight_decay": weight_decay}
+        ]
+
+        # Without this group the encoder would receive gradients but never an
+        # update, so freeze_encoder: false / unfreeze_stages would silently
+        # reproduce the frozen run. Empty whenever the encoder is fully frozen,
+        # which leaves the frozen setup byte-identical to before.
+        encoder_params = [p for p in self.model.encoder.parameters() if p.requires_grad]
+        if encoder_params:
+            encoder_lr = self.cfg.optimizer.get("encoder_lr", None)
+            encoder_wd = self.cfg.optimizer.get("encoder_weight_decay", None)
+            param_groups.append(
+                {
+                    "params": encoder_params,
+                    "lr": lr if encoder_lr is None else encoder_lr,
+                    "weight_decay": weight_decay if encoder_wd is None else encoder_wd,
+                }
+            )
+
+        optimizer = torch.optim.AdamW(params=param_groups)
         total_steps = self.trainer.estimated_stepping_batches
 
         scheduler = instantiate(

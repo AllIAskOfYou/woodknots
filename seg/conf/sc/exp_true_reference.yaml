@@ -5,3 +5,5 @@ dataset:
   resolution: 512
   folds:
     file_path: ${paths.project_root}/common/data_splits/split_k5_s42.json
+train:
+  class_groups: null
