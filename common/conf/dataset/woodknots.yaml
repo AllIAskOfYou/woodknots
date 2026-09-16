@@ -6,4 +6,4 @@ folds:
   file_path: ${paths.project_root}/common/data_splits/split_k5_s42_optimal.json
   k: 5
 class_names: ["wood_knot"] # ["primary_log", "wood_knot"]
-resolution: ???
+resolution: ??? # shorter side of every image after resizing (aspect ratio kept)

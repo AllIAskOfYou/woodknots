@@ -47,11 +47,13 @@ def collect_dataset_variants(framework_dir: Path, exclude_keys: list[str] | None
 
 
 def get_resized_dir(data_dir: str, resolution: int) -> str:
-    resized_dir = Path(data_dir).parent / "resized" / f"{resolution}"
+    resized_dir = Path(data_dir).parent / "resized" / f"short_side_{resolution}"
     return str(resized_dir)
 
 
 def ensure_resized(dataset_dir: str, resolution: int) -> str:
+    """Scales every image so its shorter side equals resolution, keeping its
+    own aspect ratio, so images end up with different shapes."""
     resized_dir = get_resized_dir(dataset_dir, resolution)
     marker = Path(resized_dir) / ".complete"
     if marker.exists():
@@ -63,14 +65,11 @@ def ensure_resized(dataset_dir: str, resolution: int) -> str:
     coco_ds = COCODataset(
         image_dir=str(images_dir), annotation_path=str(annotations_path)
     )
-    image_shape = coco_ds.load_image(0).shape
-    min_dim = min(image_shape[0], image_shape[1])
+    min_dim = min(min(img["width"], img["height"]) for img in coco_ds.coco.dataset["images"])
     if resolution > min_dim:
         raise ValueError(
             f"Requested resolution {resolution} is larger than the smallest image dimension {min_dim}."
         )
-    ratio = resolution / min_dim
-    new_shape = (int(image_shape[1] * ratio), int(image_shape[0] * ratio))
-    resize_dataset(coco_ds, new_shape, resized_dir)
+    resize_dataset(coco_ds, resolution, resized_dir)
     marker.touch()
     return resized_dir

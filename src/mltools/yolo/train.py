@@ -37,6 +37,19 @@ def _resolve_model_path(cfg: DictConfig) -> str:
     return str(weights_dir / model_path)
 
 
+# Ultralytics resizes an image's LONG side to imgsz, while dataset.resolution
+# is every image's SHORT side (see mltools.common.setup.ensure_resized). 1.5x
+# makes the long side of the dataset's most common 3:2 images (and their
+# portrait versions) exactly imgsz, so YOLO sees them at the same scale as
+# seg/nnU-Net; 4:3 images are slightly upscaled and 16:9 / ~2.2:1 ones
+# downscaled (x0.84 / x0.68).
+IMGSZ_PER_RESOLUTION = 1.5
+
+
+def get_imgsz(cfg: DictConfig) -> int:
+    return int(round(cfg.dataset.resolution * IMGSZ_PER_RESOLUTION / 32) * 32)
+
+
 def _weights_path(cfg: DictConfig) -> Path:
     return Path(cfg.paths.run_dir) / "train" / "weights" / "best.pt"
 
@@ -56,15 +69,19 @@ def _best_fitness(model: YOLO) -> float | None:
 
 
 def predict_label_maps(
-    model: YOLO, image_paths: list[Path], num_classes: int, out_dir: Path, device: str
+    model: YOLO, image_paths: list[Path], num_classes: int, out_dir: Path, device: str, imgsz: int
 ) -> None:
     """Run inference over image_paths and rasterize each result's predicted
     instance masks into a single-channel label map (background=0, classes
     1..C), writing out_dir/<case>.png. Lower-confidence detections are
     painted first so higher-confidence ones win on overlap."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    # retina_masks=True: masks come back at the original image size with the
+    # letterbox padding already removed. Without it they're at the padded
+    # inference size, and resizing those straight to (w, h) shifts/stretches
+    # them whenever an image's aspect ratio needs padding to a stride multiple.
     results = model.predict(
-        source=[str(p) for p in image_paths], device=device, verbose=False
+        source=[str(p) for p in image_paths], device=device, imgsz=imgsz, verbose=False, retina_masks=True
     )
     for path, result in zip(image_paths, results):
         h, w = result.orig_shape
@@ -75,10 +92,7 @@ def predict_label_maps(
             masks = result.masks.data.cpu().numpy()
             order = np.argsort(confs)  # ascending -> highest confidence painted last
             for i in order:
-                mask_resized = cv2.resize(
-                    masks[i], (w, h), interpolation=cv2.INTER_NEAREST
-                )
-                label_map[mask_resized > 0.5] = classes[i] + 1
+                label_map[masks[i] > 0.5] = classes[i] + 1
         cv2.imwrite(str(out_dir / f"{path.stem}.png"), label_map)
 
 
@@ -111,7 +125,7 @@ def train(cfg: DictConfig) -> None:
         project=str(cfg.paths.run_dir),
         exist_ok=True,
         data=data_yaml,
-        imgsz=cfg.dataset.resolution,
+        imgsz=get_imgsz(cfg),
         batch=cfg.experiment.batch,
         device=device,
         save_json=True,
@@ -211,4 +225,5 @@ def predict(cfg: DictConfig) -> None:
         num_classes=len(class_names),
         out_dir=pred_dir,
         device=device,
+        imgsz=get_imgsz(cfg),
     )

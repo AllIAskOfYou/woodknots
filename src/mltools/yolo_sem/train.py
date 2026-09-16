@@ -11,6 +11,7 @@ from mltools.common.utils import hash_cfg
 from mltools.yolo.dataset import get_class_names, get_dataset_dir, write_fold_split
 from mltools.yolo.train import (
     _best_fitness,
+    get_imgsz,
     _resolve_model_path,
     _train_complete_marker,
     _weights_path,
@@ -36,7 +37,7 @@ def _background_id(model: YOLO, num_classes: int) -> int:
 
 
 def predict_label_maps(
-    model: YOLO, image_paths: list[Path], num_classes: int, out_dir: Path, device: str
+    model: YOLO, image_paths: list[Path], num_classes: int, out_dir: Path, device: str, imgsz: int
 ) -> None:
     """Run inference over image_paths and write each result's dense
     per-pixel class map directly as a label map (background=0, classes
@@ -46,7 +47,7 @@ def predict_label_maps(
     out_dir.mkdir(parents=True, exist_ok=True)
     bg_id = _background_id(model, num_classes)
     results = model.predict(
-        source=[str(p) for p in image_paths], device=device, verbose=False
+        source=[str(p) for p in image_paths], device=device, imgsz=imgsz, verbose=False
     )
     for path, result in zip(image_paths, results):
         raw = result.semantic_mask.data.cpu().numpy().astype(np.int32)
@@ -86,7 +87,7 @@ def train(cfg: DictConfig) -> None:
         project=str(cfg.paths.run_dir),
         exist_ok=True,
         data=data_yaml,
-        imgsz=cfg.dataset.resolution,
+        imgsz=get_imgsz(cfg),
         batch=cfg.experiment.batch,
         device=device,
         save_json=True,
@@ -184,4 +185,5 @@ def predict(cfg: DictConfig) -> None:
         num_classes=len(class_names),
         out_dir=pred_dir,
         device=device,
+        imgsz=get_imgsz(cfg),
     )

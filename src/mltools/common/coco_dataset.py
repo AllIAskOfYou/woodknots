@@ -125,9 +125,17 @@ def _process_image(
     return new_img_info, new_anns
 
 
+def short_side_size(width: int, height: int, short_side: int) -> tuple[int, int]:
+    """(width, height) scaled uniformly so min(width, height) == short_side."""
+    ratio = short_side / min(width, height)
+    if width <= height:
+        return short_side, round(height * ratio)
+    return round(width * ratio), short_side
+
+
 def resize_dataset(
     dataset: COCODataset,
-    target_size: tuple[int, int],
+    short_side: int,
     output_dir: str,
     ann_filename: str = "annotations.json",
     file_ending: str = ".png",
@@ -135,12 +143,14 @@ def resize_dataset(
 ) -> None:
     """Resize all images + annotations in a COCODataset and write them to output_dir.
 
-    target_size: (width, height)
+    Each image is scaled uniformly so its shorter side equals short_side,
+    preserving its own aspect ratio. The dataset mixes several camera formats
+    (4:3, 3:2, 16:9, ~2.2:1, and portrait variants), so forcing one shared
+    target shape would stretch most of them anisotropically.
     """
     images_out_dir = os.path.join(output_dir, "images")
     os.makedirs(images_out_dir, exist_ok=True)
 
-    target_w, target_h = target_size
     coco_data = dataset.coco.dataset
 
     new_images = []
@@ -153,12 +163,12 @@ def resize_dataset(
                 dataset,
                 index,
                 img_id,
-                target_w,
-                target_h,
+                *short_side_size(img_info["width"], img_info["height"], short_side),
                 images_out_dir,
                 file_ending,
             ): index
             for index, img_id in enumerate(dataset.ids)
+            for img_info in dataset.coco.loadImgs(img_id)
         }
 
         for future in tqdm(
