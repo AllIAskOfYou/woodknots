@@ -7,7 +7,4 @@ dataset:
   resolution: 640
 
 train:
-  freeze: 11
-  augmentation:
-    copy_paste: 0.3
-    copy_paste_mode: "mixup"
+  freeze: null

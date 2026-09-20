@@ -7,6 +7,7 @@ from mltools.common.evaluate import check_dir_ready, evaluate_segmentation
 from mltools.common.logger import get_logger
 from mltools.common.utils import hash_cfg
 from mltools.yolo.dataset import get_class_names, get_dataset_dir
+from mltools.yolo.train import get_mode
 
 logger = get_logger(__name__)
 
@@ -34,6 +35,7 @@ def evaluate(cfg: DictConfig) -> None:
         json.dump(
             {
                 "framework": "yolo",
+                "mode": get_mode(cfg),
                 "experiment": cfg.experiment.name,
                 "fold": cfg.experiment.fold,
                 **results,

@@ -13,6 +13,8 @@ from transformers import (
     Mask2FormerForUniversalSegmentation,
 )
 from segmentation_models_pytorch.decoders.manet.model import MAnetDecoder
+from segmentation_models_pytorch.encoders import get_encoder
+from segmentation_models_pytorch.decoders.unet.decoder import UnetDecoder
 from segmentation_models_pytorch.decoders.upernet.decoder import UPerNetDecoder
 
 load_dotenv()
@@ -100,6 +102,25 @@ class DINOv3MAnet(nn.Module):
             token=_hf_token(),
         )
 
+    def _build_decoder(self, encoder_channels):
+        """(decoder, channels it outputs). Overridden by subclasses that keep
+        this encoder but swap the decoder.
+
+        Note the block count: every smp decoder drops the first encoder entry
+        ("same spatial resolution as the input") and pairs each block with a
+        skip, so with 4 encoder channels there are only 3 skips left and zip()
+        builds 3 blocks, not the 4 decoder_channels suggest. The stride-4
+        feature is consumed as a skip, and the output is stride 8 with
+        decoder_channels[2] channels — forward() then upsamples it."""
+        decoder_channels = (256, 128, 64, 32)
+        decoder = MAnetDecoder(
+            encoder_channels=encoder_channels,
+            decoder_channels=decoder_channels,
+            n_blocks=4,  # Matches our 4 stages
+            pab_channels=64,
+        )
+        return decoder, decoder_channels[2]
+
     def __init__(self, num_classes=1):
         super().__init__()
 
@@ -108,22 +129,16 @@ class DINOv3MAnet(nn.Module):
         encoder_channels = self.ENCODER_CHANNELS
 
         # 2. SMP's internal decoder
-        decoder_channels = (256, 128, 64, 32)
-        self.decoder = MAnetDecoder(
-            encoder_channels=encoder_channels,
-            decoder_channels=decoder_channels,
-            n_blocks=4,  # Matches our 4 stages
-            pab_channels=64,
-        )
+        self.decoder, head_channels = self._build_decoder(encoder_channels)
 
         # 3. Final Head
         self.segmentation_head = nn.Sequential(
             # This 3x3 conv cleans up the interpolation artifacts
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(head_channels, head_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(head_channels),
             nn.ReLU(inplace=True),
             # This 1x1 conv does the final classification
-            nn.Conv2d(64, num_classes, kernel_size=1)
+            nn.Conv2d(head_channels, num_classes, kernel_size=1)
         )
 
     def get_encoder_parameters(self, stages=[2, 3]):
@@ -177,6 +192,106 @@ class ConvNeXtMAnet(DINOv3MAnet):
                 f"{self.ENCODER_CHANNELS}; pick a ConvNeXt-Large checkpoint."
             )
         return encoder
+
+
+class SMPEncoderMAnet(DINOv3MAnet):
+    """DINOv3MAnet's decoder and head on any segmentation_models_pytorch
+    encoder (resnet50, mit_b5, ...), so the backbone is the only thing that
+    differs from exp_reference.
+
+    smp encoders emit 6 features (strides 1, 2, 4, 8, 16, 32) where the DINOv3
+    backbone emits 4 (strides 4..32). Feeding all 6 to MAnetDecoder would give
+    it 5 blocks decoding to full resolution instead of the reference's 3
+    blocks ending at stride 8 — a better model, but then a win couldn't be
+    attributed to the backbone. So the two finest features are dropped and the
+    decoder is built exactly as in DINOv3MAnet.
+
+    unfreeze_stages is not supported here: it matches ConvNeXt's `stages.N`
+    parameter names, which resnet (layer1..4) and mit (block1..4) don't use.
+    """
+
+    def __init__(self, encoder_name, encoder_weights="imagenet", num_classes=1):
+        # Read by _build_encoder, which super().__init__ calls. Plain strings,
+        # so assigning them before nn.Module.__init__ is fine.
+        self.encoder_name = encoder_name
+        self.encoder_weights = encoder_weights
+        super().__init__(num_classes=num_classes)
+
+    def _build_encoder(self):
+        encoder = get_encoder(
+            self.encoder_name,
+            in_channels=3,
+            depth=5,
+            weights=self.encoder_weights,
+        )
+        # Keep strides 4..32 only, matching DINOv3MAnet's 4-entry convention.
+        self.ENCODER_CHANNELS = list(encoder.out_channels)[2:]
+        return encoder
+
+    def get_encoder_parameters(self, stages=[2, 3]):
+        raise NotImplementedError(
+            f"unfreeze_stages is not supported for the smp encoder "
+            f"'{self.encoder_name}': its parameters aren't named `stages.N`. "
+            f"Use freeze_encoder: true / false instead."
+        )
+
+    def unfreeze_encoder_stages(self, stages=[2, 3]):
+        self.get_encoder_parameters(stages)
+
+    def forward(self, x):
+        # smp encoders return a plain list, not a BackboneOutput.
+        features = self.encoder(x)[2:]
+
+        decoder_output = self.decoder(features)
+
+        upsampled_output = F.interpolate(
+            decoder_output, size=x.shape[-2:], mode="bilinear", align_corners=False
+        )
+
+        return self.segmentation_head(upsampled_output)
+
+
+class DINOv3Unet(DINOv3MAnet):
+    """Same DINOv3 ConvNeXt-Large backbone as DINOv3MAnet, with a plain U-Net
+    decoder instead of MAnet's.
+
+    MAnet is a U-Net with attention added (PAB at the bottleneck, MFAB in
+    place of the plain skip blocks), so this is the ablation that says whether
+    that attention earns its cost. Chosen over U-Net++: its nested dense skips
+    mainly pay off when the encoder is trained with them, and this encoder is
+    frozen in the reference setup — while every extra nested block is
+    decoder-side memory at 512x512.
+
+    Two differences from DINOv3MAnet beyond the decoder blocks themselves,
+    both from padding the encoder channels with a placeholder entry (see
+    _build_decoder): all 4 encoder features are used as skips (MAnet loses the
+    stride-4 one), and the last block decodes to the input resolution instead
+    of the head upsampling stride-8 logits.
+    """
+
+    DECODER_CHANNELS = (256, 128, 64, 32)
+
+    def _build_decoder(self, encoder_channels):
+        # UnetDecoder drops encoder_channels[0] as "the input-resolution
+        # feature", so pad the list to get one block per stage (4 blocks,
+        # 4 skips) rather than the 3 the unpadded list would produce. The
+        # padded value is never read.
+        decoder = UnetDecoder(
+            encoder_channels=[0, *encoder_channels],
+            decoder_channels=self.DECODER_CHANNELS,
+            n_blocks=len(self.DECODER_CHANNELS),
+        )
+        return decoder, self.DECODER_CHANNELS[-1]
+
+    def forward(self, x):
+        features = self.encoder(x).feature_maps
+        # The placeholder that matches the padded channel list. UnetDecoder
+        # drops features[0]'s channels but reads its spatial size, using it as
+        # the target the last (skipless) block upsamples to — so passing the
+        # input image makes the decoder output full resolution, and no
+        # interpolation is needed before the head.
+        decoder_output = self.decoder([x, *features])
+        return self.segmentation_head(decoder_output)
 
 
 class DINOv3UPerNet(nn.Module):

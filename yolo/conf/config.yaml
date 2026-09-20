@@ -13,6 +13,8 @@ dataset:
 
 framework: "yolo"
 time: ${now:%Y-%m-%d_%H-%M-%S}
+# Ultralytics seeds torch/numpy/python and its dataloader workers from this.
+seed: 0
 
 experiment:
   name: ${hydra:runtime.choices.experiment}

@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import cv2
@@ -10,6 +9,8 @@ from tqdm import tqdm
 from mltools.common.coco_dataset import COCODataset
 from mltools.common.logger import make_bar_format
 from mltools.common.masks import mask_to_label_map
+from mltools.common.splits import get_split
+from mltools.common.utils import symlink_relative
 
 CONF_MAP = {0.2: "low", 0.6: "medium", 1.0: "high"}
 
@@ -157,7 +158,7 @@ def ensure_formatted(
 
     images_link = dataset_dir / "images"
     if not images_link.exists():
-        images_link.symlink_to(Path(local_dir) / "images", target_is_directory=True)
+        symlink_relative(images_link, Path(local_dir) / "images", target_is_directory=True)
 
     class_names = get_class_names(label_cfg)
     names_to_idx = {name: idx for idx, name in class_names.items()}
@@ -175,13 +176,15 @@ def ensure_formatted(
 
 
 def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str, class_names: dict[int, str]) -> str:
-    """Fold-dependent, cheap, uncached — populates out_dir/{train,val}/{images,labels}/
+    """Fold-dependent, cheap, uncached — populates out_dir/{train,val,test}/{images,labels}/
     with symlinks into the shared formatted dataset (no duplication of the
-    underlying files), writes out_dir/{train,val}.txt, and out_dir/data.yaml.
+    underlying files), writes out_dir/{train,val,test}.txt, and out_dir/data.yaml.
+    Splits come from mltools.common.splits.get_split: Ultralytics selects
+    best.pt (and runs early stopping) on val; test is only predicted on.
     Called by both train.py and evaluate.py, so each run gets its own
     fold-specific data.yaml without mutating the shared formatted dataset.
 
-    Train and val each get their own images/labels directory tree rather than
+    Each split gets its own images/labels directory tree rather than
     just their own file list. Ultralytics derives its label-cache path purely
     from the labels directory (ignoring which specific files are listed), so
     if both splits pointed at the same shared labels/ dir they'd compute the
@@ -191,18 +194,16 @@ def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str,
     a truncated pickle. Distinct directories give each split its own cache
     path instead.
     """
-    folds = json.loads(Path(folds_path).read_text())
-    split = folds[fold]
+    split = get_split(folds_path, fold)
 
-    # Resolve to absolute: symlink_to with a relative target resolves relative
-    # to the symlink's own directory, not CWD, so a relative dataset_dir here
-    # would silently point the wrong way.
+    # Resolve to absolute so symlink_relative can compute the hop from each
+    # link's own directory, whatever dataset_dir was passed as.
     dataset_dir = Path(dataset_dir).resolve()
     src_images_dir = dataset_dir / "images"
     src_labels_dir = dataset_dir / "labels"
     out_path = Path(out_dir)
 
-    for split_name in ("train", "val"):
+    for split_name in ("train", "val", "test"):
         images_dir = out_path / split_name / "images"
         labels_dir = out_path / split_name / "labels"
         images_dir.mkdir(parents=True, exist_ok=True)
@@ -212,13 +213,13 @@ def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str,
         for case_id in split[split_name]:
             image_link = images_dir / f"{case_id}.png"
             if not image_link.exists():
-                image_link.symlink_to(src_images_dir / f"{case_id}.png")
+                symlink_relative(image_link, src_images_dir / f"{case_id}.png")
             lines.append(str(image_link))
 
             src_label = src_labels_dir / f"{case_id}.txt"
             label_link = labels_dir / f"{case_id}.txt"
             if src_label.exists() and not label_link.exists():
-                label_link.symlink_to(src_label)
+                symlink_relative(label_link, src_label)
 
         (out_path / f"{split_name}.txt").write_text("\n".join(lines))
 
@@ -226,6 +227,7 @@ def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str,
         "path": str(out_path),
         "train": "train.txt",
         "val": "val.txt",
+        "test": "test.txt",
         "names": class_names,
     }
     data_yaml_path = out_path / "data.yaml"

@@ -7,6 +7,8 @@ from tqdm import tqdm
 from mltools.common.coco_dataset import COCODataset
 from mltools.common.logger import make_bar_format
 from mltools.common.masks import mask_to_label_map
+from mltools.common.splits import get_split
+from mltools.common.utils import symlink_relative
 
 
 def get_framework_root(data_root: str) -> str:
@@ -54,7 +56,7 @@ def _process_case(
 
     img_out_path = images_tr_dir / f"{case_id}_0000.png"
     if not img_out_path.exists():
-        img_out_path.symlink_to(Path(local_dir) / "images" / f"{case_id}.png")
+        symlink_relative(img_out_path, Path(local_dir) / "images" / f"{case_id}.png")
 
     label_out_path = labels_tr_dir / f"{case_id}.png"
     if not label_out_path.exists():
@@ -115,9 +117,18 @@ def ensure_formatted(
     with open(dataset_dir / "dataset.json", "w") as f:
         json.dump(dataset_json, f, indent=2)
 
-    # create symlink for folds_path to splits_final.json
-    splits_final_path = dataset_dir / "splits_final.json"
-    splits_final_path.symlink_to(Path(folds_path).resolve())
+    # nnU-Net only knows train/val, so each split's test partition is simply
+    # left out of splits_final.json: nnU-Net trains on train and selects
+    # checkpoint_best on val, and predict() runs on test afterwards. The
+    # planner copies this file into preprocessed/, which is where training
+    # reads it from.
+    num_folds = len(json.loads(Path(folds_path).read_text()))
+    splits = []
+    for fold in range(num_folds):
+        split = get_split(folds_path, fold)
+        splits.append({"train": split["train"], "val": split["val"]})
+    with open(dataset_dir / "splits_final.json", "w") as f:
+        json.dump(splits, f, indent=2)
 
     marker.touch()
 

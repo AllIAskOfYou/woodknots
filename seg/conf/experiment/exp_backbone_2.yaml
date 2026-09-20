@@ -1,0 +1,15 @@
+# @package _global_
+# ImageNet MiT-B5 (SegFormer's MixTransformer, ~82M) instead of DINOv3
+# ConvNeXt-Large — the transformer counterpart to exp_backbone_1, and the
+# largest encoder smp offers. Same MAnet decoder and head as exp_reference.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  model:
+    _target_: mltools.seg.models.SMPEncoderMAnet
+    encoder_name: mit_b5
+    encoder_weights: imagenet
+    num_classes: 1

@@ -8,5 +8,5 @@ dataset:
 train:
   augmentation:
     hsv_h: 0.1
-    hsv_s: 0.4
+    hsv_s: 0.8
     hsv_v: 0.6

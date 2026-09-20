@@ -4,4 +4,4 @@ experiment:
   model_path: yolo26m-seg.pt
   batch: 16
 dataset:
-  resolution: 1024
+  resolution: 640

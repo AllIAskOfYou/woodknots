@@ -125,7 +125,7 @@ def get_preprocessing_transform(cfg: DictConfig):
     return A.Compose(transforms)
 
 
-def get_train_transform(cfg: DictConfig):
+def get_train_transform(cfg: DictConfig, seed: int | None = None):
     # Common size parameters
     target_size = (cfg.resolution, int(cfg.resolution * cfg.w2h_ratio))
 
@@ -196,6 +196,9 @@ def get_train_transform(cfg: DictConfig):
         p=1 - cfg.mosaic_p,
     )
 
+    # Albumentations 2.x gives every Compose its own generator, seeded from OS
+    # entropy unless a seed is passed — seeding numpy globally does NOT reach
+    # it. Without this, every augmentation parameter differs between runs.
     return A.Compose(
         [
             A.OneOf([mosaic_branch, non_mosaic_branch], p=1.0),
@@ -215,11 +218,14 @@ def get_train_transform(cfg: DictConfig):
                 p=1.0,
             ),
             A.ToTensorV2(transpose_mask=True),
-        ]
+        ],
+        seed=seed,
     )
 
 
-def get_val_transform(cfg: DictConfig):
+def get_val_transform(cfg: DictConfig, seed: int | None = None):
+    # Deterministic transforms only, but seeded for consistency with
+    # get_train_transform.
     return A.Compose(
         [
             A.Normalize(),
@@ -229,7 +235,8 @@ def get_val_transform(cfg: DictConfig):
                 p=1.0,
             ),
             A.ToTensorV2(transpose_mask=True),
-        ]
+        ],
+        seed=seed,
     )
 
 

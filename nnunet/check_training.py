@@ -1,27 +1,55 @@
+"""Report which nnU-Net experiment/fold runs completed. Standard library only,
+so it runs with a plain `python3` (no venv, no hydra):
+
+    python3 nnunet/check_training.py                    # every experiment
+    python3 nnunet/check_training.py exp_0 exp_2
+    python3 nnunet/check_training.py --results-root results_sc
+
+Instead of composing the hydra config, paths follow the layout it produces:
+<results_root>/nnunet/<experiment>/fold_<i>/nnunet_native/Dataset*/<trainer>__<plans>__2d/fold_<i>.
+"""
+import argparse
+import re
 import sys
 from pathlib import Path
 
-from hydra import initialize_config_dir
-
-from mltools.common.setup import compose_with_hydra_config, get_experiment_names
-
 MIN_CHECKPOINT_BYTES = 1024  # anything smaller than this is obviously truncated/corrupted
 
+FRAMEWORK_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = FRAMEWORK_DIR.parent
+DATASET_CFG = PROJECT_ROOT / "common" / "conf" / "dataset" / "woodknots.yaml"
 
-def _fold_paths(cfg) -> dict:
-    dataset_name = f"Dataset{cfg.dataset.id:03d}_{cfg.dataset.name}"
-    trainer = cfg.experiment.get("trainer", "nnUNetTrainer")
-    plans = cfg.experiment.get("plans", "nnUNetPlans")
-    fold_dir = (
-        Path(cfg.paths.nnunet.results)
-        / dataset_name
-        / f"{trainer}__{plans}__2d"
-        / f"fold_{cfg.experiment.fold}"
+
+def get_experiment_names() -> list[str]:
+    return sorted(f.stem for f in (FRAMEWORK_DIR / "conf" / "experiment").glob("*.yaml"))
+
+
+def get_num_folds() -> int:
+    """dataset.folds.k from the shared dataset config, read with a regex
+    (no yaml parser) — it's the only `k:` key in that file."""
+    match = re.search(r"^\s+k:\s*(\d+)\s*(#.*)?$", DATASET_CFG.read_text(), re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"Could not find folds.k in {DATASET_CFG}; pass --folds.")
+    return int(match.group(1))
+
+
+def _fold_paths(results_root: Path, exp_name: str, fold: int) -> dict:
+    run_dir = results_root / "nnunet" / exp_name / f"fold_{fold}"
+    # Dataset id/name and trainer/plans only appear in the directory names, so
+    # find them instead of re-deriving them from the config.
+    candidates = sorted(
+        (run_dir / "nnunet_native").glob(f"Dataset*/*__2d/fold_{fold}"),
+        key=lambda p: p.stat().st_mtime,
     )
+    fold_dir = candidates[-1] if candidates else run_dir / "nnunet_native" / f"fold_{fold}"
     return {
+        "run_dir": run_dir,
         "fold_dir": fold_dir,
+        "fold_dir_found": bool(candidates),
         "checkpoint_path": fold_dir / "checkpoint_final.pth",
-        "validation_dir": fold_dir / "validation",
+        "best_checkpoint_path": fold_dir / "checkpoint_best.pth",
+        # test-partition predictions (mltools.nnunet.train.predict)
+        "predictions_dir": run_dir / "predictions",
     }
 
 
@@ -33,20 +61,21 @@ def _tail_has_error(fold_dir: Path) -> bool:
     return "Error" in tail or "Traceback" in tail
 
 
-def check_fold(cfg) -> dict:
-    paths = _fold_paths(cfg)
+def check_fold(results_root: Path, exp_name: str, fold: int) -> dict:
+    paths = _fold_paths(results_root, exp_name, fold)
     fold_dir = paths["fold_dir"]
     checkpoint_path = paths["checkpoint_path"]
-    validation_dir = paths["validation_dir"]
+    best_checkpoint_path = paths["best_checkpoint_path"]
+    predictions_dir = paths["predictions_dir"]
 
     status = {
-        "experiment": cfg.experiment.name,
-        "fold": cfg.experiment.fold,
-        "run_dir": str(cfg.paths.run_dir),
+        "experiment": exp_name,
+        "fold": fold,
+        "run_dir": str(paths["run_dir"]),
         "checkpoint_path": str(checkpoint_path),
     }
 
-    if not fold_dir.exists():
+    if not paths["fold_dir_found"]:
         status["state"] = "NOT_STARTED"
         return status
 
@@ -54,12 +83,15 @@ def check_fold(cfg) -> dict:
         status["state"] = "FAILED" if _tail_has_error(fold_dir) else "INCOMPLETE"
         return status
 
-    if checkpoint_path.stat().st_size < MIN_CHECKPOINT_BYTES:
+    if any(
+        not p.exists() or p.stat().st_size < MIN_CHECKPOINT_BYTES
+        for p in (checkpoint_path, best_checkpoint_path)
+    ):
         status["state"] = "CORRUPTED"
         return status
 
-    if not validation_dir.exists() or not any(validation_dir.iterdir()):
-        status["state"] = "NO_VALIDATION_OUTPUT"
+    if not predictions_dir.exists() or not any(predictions_dir.iterdir()):
+        status["state"] = "NO_PREDICTIONS"
         return status
 
     status["state"] = "COMPLETED"
@@ -67,21 +99,24 @@ def check_fold(cfg) -> dict:
 
 
 def main() -> int:
-    framework_dir = Path(__file__).parent
-    config_dir = str((framework_dir / "conf").resolve())
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("experiments", nargs="*", help="default: every nnunet/conf/experiment/*.yaml")
+    ap.add_argument(
+        "--results-root",
+        default=str(PROJECT_ROOT / "results"),
+        help="paths.results_root (default: <project>/results)",
+    )
+    ap.add_argument("--folds", type=int, default=None, help="number of folds (default: dataset folds.k)")
+    args = ap.parse_args()
 
-    results = []
-    with initialize_config_dir(config_dir=config_dir, version_base=None):
-        for exp_name in get_experiment_names(framework_dir):
-            probe_cfg = compose_with_hydra_config(
-                [f"experiment={exp_name}", "experiment.fold=0"]
-            )
-            num_folds = probe_cfg.dataset.folds.k
-            for fold in range(num_folds):
-                cfg = compose_with_hydra_config(
-                    [f"experiment={exp_name}", f"experiment.fold={fold}"]
-                )
-                results.append(check_fold(cfg))
+    results_root = Path(args.results_root)
+    num_folds = args.folds if args.folds is not None else get_num_folds()
+
+    results = [
+        check_fold(results_root, exp_name, fold)
+        for exp_name in (args.experiments or get_experiment_names())
+        for fold in range(num_folds)
+    ]
 
     header = f"{'experiment':<12} {'fold':<5} {'state':<20} checkpoint"
     print(header)

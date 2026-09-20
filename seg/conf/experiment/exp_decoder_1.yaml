@@ -6,7 +6,4 @@ dataset:
 
 train:
   model:
-    _target_: mltools.seg.dinov3.DINOv3Mask2Former
-    num_classes: 1
-    num_queries: 30
-  batch_size: 20
+    _target_: mltools.seg.models.DINOv3UPerNet

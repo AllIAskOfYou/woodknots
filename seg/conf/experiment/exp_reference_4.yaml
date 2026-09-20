@@ -3,7 +3,4 @@ experiment:
   fold: ???
 dataset:
   resolution: 512
-
-train:
-  model:
-    _target_: mltools.seg.dinov3.DINOv3FPN
+seed: 4

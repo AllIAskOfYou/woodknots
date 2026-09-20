@@ -9,72 +9,23 @@ squeue, so it needs neither the venv nor hydra.
     python3 scripts/resubmit.py seg --dry-run
     python3 scripts/resubmit.py seg --exclude ixb7 --yes
 
-Completion follows each framework's own check_training.py, with one addition:
-predictions/ must hold as many files as the fold has validation cases, not just
-be non-empty. predict() writes them one per iteration and skips entirely when
-the directory is non-empty, so a job killed mid-loop would otherwise look
-finished forever and be scored on an arbitrary subset of cases.
+A run counts as complete when its run dir holds both markers every framework
+writes: .train_complete (touched as the last step of train()) and
+.pred_complete (touched once every test-case prediction is written). A job
+killed mid-way leaves the marker missing, and predict() overwrites whatever
+partial predictions it left behind, so nothing has to be cleaned up first.
+See scripts/check_runs.py for the read-only version of this check.
 """
 import argparse
 import glob
-import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 
-import yaml
-
-MIN_CKPT_BYTES = 1024
-RESUBMIT_STATES = {
-    "NOT_STARTED",
-    "FAILED",
-    "INCOMPLETE",
-    "CORRUPTED",
-    "NO_PREDICTIONS",
-    "PARTIAL_PREDICTIONS",
-}
-
-
-def resolve(value, cfg, depth=0):
-    """Expand ${a.b.c} and ${oc.env:VAR} against an already-composed config."""
-    if not isinstance(value, str) or depth > 10:
-        return value
-    value = re.sub(r"\$\{oc\.env:(\w+)\}", lambda m: os.environ.get(m.group(1), os.getcwd()), value)
-
-    def lookup(match):
-        node = cfg
-        for part in match.group(1).split("."):
-            if not isinstance(node, dict) or part not in node:
-                return match.group(0)
-            node = node[part]
-        return str(node)
-
-    expanded = re.sub(r"\$\{([\w.]+)\}", lookup, value)
-    return expanded if expanded == value else resolve(expanded, cfg, depth + 1)
-
-
-def load_run_cfg(run_dir):
-    path = os.path.join(run_dir, ".hydra", "config.yaml")
-    if not os.path.exists(path):
-        return None
-    try:
-        return yaml.safe_load(open(path))
-    except Exception:
-        return None
-
-
-def expected_predictions(cfg, fold):
-    """Validation-case count for this fold, from the config the run actually
-    used — the experiment's yaml may have been edited or deleted since."""
-    if not cfg:
-        return None
-    try:
-        folds_file = resolve(cfg["dataset"]["folds"]["file_path"], cfg)
-        return len(json.loads(open(folds_file).read())[fold]["val"])
-    except Exception:
-        return None
+TRAIN_COMPLETE = ".train_complete"
+PRED_COMPLETE = ".pred_complete"
+RESUBMIT_STATES = {"NOT_STARTED", "FAILED", "INCOMPLETE", "NO_PREDICTIONS"}
 
 
 def log_has_error(framework, exp, fold):
@@ -88,68 +39,21 @@ def log_has_error(framework, exp, fold):
     return "Error" in tail or "Traceback" in tail
 
 
-def big_enough(path):
-    return os.path.exists(path) and os.path.getsize(path) >= MIN_CKPT_BYTES
-
-
-def training_artifact(framework, run_dir, cfg):
-    """(trained, marker_present) for the framework's own layout."""
-    if framework == "seg":
-        ckpts = glob.glob(os.path.join(run_dir, "checkpoints", "best-model-*.ckpt"))
-        trained = len(ckpts) == 1 and big_enough(ckpts[0])
-        return trained, os.path.exists(os.path.join(run_dir, "checkpoints", ".complete"))
-    if framework in ("yolo", "yolo_sem"):
-        weights = os.path.join(run_dir, "train", "weights", "best.pt")
-        return big_enough(weights), os.path.exists(os.path.join(run_dir, "train", ".complete"))
-    if framework == "nnunet":
-        # nnU-Net writes outside the hydra run dir; the path is only knowable
-        # from the config the run composed.
-        if not cfg:
-            return False, False
-        try:
-            fold_dir = os.path.join(
-                resolve(cfg["paths"]["nnunet"]["results"], cfg),
-                f"Dataset{int(cfg['dataset']['id']):03d}_{cfg['dataset']['name']}",
-                f"{cfg['experiment'].get('trainer', 'nnUNetTrainer')}__"
-                f"{cfg['experiment'].get('plans', 'nnUNetPlans')}__2d",
-                f"fold_{cfg['experiment']['fold']}",
-            )
-        except Exception:
-            return False, False
-        trained = big_enough(os.path.join(fold_dir, "checkpoint_final.pth"))
-        validation = os.path.join(fold_dir, "validation")
-        return trained, bool(trained and os.path.isdir(validation) and os.listdir(validation))
-    raise SystemExit(f"unknown framework: {framework}")
-
-
 def check(framework, exp, fold):
-    """-> (state, detail, predictions_dir_to_clear_or_None)"""
+    """-> (state, detail)"""
     run_dir = os.path.join("results", framework, exp, f"fold_{fold}")
     if not os.path.isdir(run_dir):
-        return "NOT_STARTED", "", None
+        return "NOT_STARTED", ""
 
-    cfg = load_run_cfg(run_dir)
-    trained, marker = training_artifact(framework, run_dir, cfg)
-    if not trained:
+    if not os.path.exists(os.path.join(run_dir, TRAIN_COMPLETE)):
         state = "FAILED" if log_has_error(framework, exp, fold) else "INCOMPLETE"
-        return state, "no usable checkpoint", None
+        return state, "training did not finish"
 
-    if framework == "nnunet":
-        # `marker` doubles as "validation output present" for nnU-Net.
-        return ("COMPLETED", "", None) if marker else ("NO_PREDICTIONS", "", None)
+    if not os.path.exists(os.path.join(run_dir, PRED_COMPLETE)):
+        return "NO_PREDICTIONS", "predictions did not finish"
 
-    pred_dir = os.path.join(run_dir, "predictions")
-    n = len(glob.glob(os.path.join(pred_dir, "*.png")))
-    if n == 0:
-        return "NO_PREDICTIONS", "", None
-    want = expected_predictions(cfg, fold)
-    if want is not None and n != want:
-        # predict() skips whenever predictions/ is non-empty, so the directory
-        # has to go or the resubmitted job will not regenerate it.
-        return "PARTIAL_PREDICTIONS", f"{n}/{want} cases", pred_dir
-    if not marker and want is None:
-        return "INCOMPLETE", "no completion marker", None
-    return "COMPLETED", f"{n} cases", None
+    n = len(glob.glob(os.path.join(run_dir, "predictions", "*.png")))
+    return "COMPLETED", f"{n} cases"
 
 
 def queued_job_names():
@@ -187,25 +91,24 @@ def main():
     n_folds = args.folds
     if n_folds is None:
         try:
-            n_folds = yaml.safe_load(open("common/conf/dataset/woodknots.yaml"))["folds"]["k"]
+            cfg_text = open("common/conf/dataset/woodknots.yaml").read()
+            n_folds = int(re.search(r"^\s+k:\s*(\d+)", cfg_text, re.M).group(1))
         except Exception:
             n_folds = 5
 
     queued = queued_job_names()
-    todo, to_clear, counts = [], [], {}
+    todo, counts = [], {}
     print(f"{'experiment':<22} " + " ".join(f"f{i}".ljust(11) for i in range(n_folds)))
     for exp in experiments:
         cells = []
         for fold in range(n_folds):
             if f"{fw}-{exp}-fold_{fold}" in queued:
-                state, detail, clear = "QUEUED", "", None
+                state, detail = "QUEUED", ""
             else:
-                state, detail, clear = check(fw, exp, fold)
+                state, detail = check(fw, exp, fold)
             counts[state] = counts.get(state, 0) + 1
             if state in RESUBMIT_STATES:
                 todo.append((exp, fold))
-                if clear:
-                    to_clear.append(clear)
             cells.append(state[:11])
         print(f"{exp:<22} " + " ".join(c.ljust(11) for c in cells))
 
@@ -217,12 +120,6 @@ def main():
     print(f"\n{len(todo)} job(s) to resubmit:")
     for exp, fold in todo:
         print(f"   {fw} {exp} fold {fold}")
-    if to_clear:
-        print(f"\n{len(to_clear)} partial predictions dir(s) will be DELETED first")
-        print("(predict() skips a non-empty predictions/, so they would not be regenerated):")
-        for d in to_clear:
-            print(f"   rm -rf {d}")
-
     if args.dry_run:
         print("\n--dry-run: nothing submitted.")
         return 0
@@ -230,10 +127,6 @@ def main():
         if input("\nproceed? [y/N] ").strip().lower() not in ("y", "yes"):
             print("aborted.")
             return 1
-
-    for d in to_clear:
-        shutil.rmtree(d, ignore_errors=True)
-        print(f"removed {d}")
 
     env = dict(os.environ)
     if args.exclude:

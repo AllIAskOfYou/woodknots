@@ -6,4 +6,4 @@ dataset:
 
 train:
   model:
-    _target_: mltools.seg.dinov3.DINOv3UPerNet
+    _target_: mltools.seg.models.DINOv3FPN

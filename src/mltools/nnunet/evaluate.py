@@ -13,16 +13,10 @@ def evaluate(cfg: DictConfig) -> None:
     fold = cfg.experiment.fold
 
     dataset_name = f"Dataset{dataset_id:03d}_{cfg.dataset.name}"
-    trainer = cfg.experiment.get("trainer", "nnUNetTrainer")
-    plans = cfg.experiment.get("plans", "nnUNetPlans")
 
-    pred_dir = (
-        Path(cfg.paths.nnunet.results)
-        / dataset_name
-        / f"{trainer}__{plans}__2d"
-        / f"fold_{fold}"
-        / "validation"
-    )
+    # Test-partition predictions from checkpoint_best (see train.predict), not
+    # nnU-Net's own validation/ export, which covers the val partition.
+    pred_dir = Path(cfg.paths.run_dir) / "predictions"
     gt_dir = Path(cfg.paths.nnunet.raw) / dataset_name / "labelsTr"
 
     check_dir_ready(pred_dir, "Prediction", logger=logger)

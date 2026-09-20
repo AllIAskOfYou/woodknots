@@ -1,16 +1,27 @@
+# instance (*-seg.pt, per-object masks) | semantic (*-sem.pt, dense class map)
+mode: instance
+# Ultralytics pins cuDNN/cuBLAS with this (warn_only, so ops without a
+# deterministic kernel still run). Passed explicitly rather than inherited
+# from Ultralytics' defaults, as is the root-level seed it reads.
+deterministic: true
+# Prediction thresholds, pinned rather than inherited from Ultralytics'
+# defaults. conf gates whole detections before any mask exists (instance mode
+# only; semantic argmaxes every pixel), iou is the NMS overlap threshold.
+conf: 0.25
+iou: 0.7
 epochs: 300
 patience: 50
 finetune_epochs: 20
-freeze: null
+freeze: 11
 augmentation:
-  hsv_h: 0.01
-  hsv_s: 0.3
-  hsv_v: 0.5
-  flipud: 0.5
-  fliplr: 0.5
-  degrees: 10.0
-  translate: 0.2
-  scale: 0.9
+  hsv_h: 0.0
+  hsv_s: 0.0
+  hsv_v: 0.0
+  flipud: 0.0
+  fliplr: 0.0
+  degrees: 0.0
+  translate: 0.0
+  scale: 1.0
   mosaic: 1.0
   copy_paste: 0.0
   copy_paste_mode: "flip"

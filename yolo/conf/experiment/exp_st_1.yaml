@@ -4,7 +4,8 @@ experiment:
   model_path: yolo26m-seg.pt
   batch: 16
 dataset:
-  resolution: 1024
-
+  resolution: 640
 train:
-  freeze: 11
+  augmentation:
+    scale: 0.5
+    translate: 0.2

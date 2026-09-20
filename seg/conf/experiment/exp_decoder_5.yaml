@@ -1,4 +1,6 @@
 # @package _global_
+# Plain U-Net decoder — the MAnet reference minus its attention blocks
+# (PAB bottleneck, MFAB skips). Everything else matches exp_reference.
 experiment:
   fold: ???
 dataset:
@@ -6,16 +8,5 @@ dataset:
 
 train:
   model:
-    _target_: mltools.seg.dinov3.DINOv3Mask2Former
+    _target_: mltools.seg.models.DINOv3Unet
     num_classes: 1
-    num_queries: 10            # mean 2 objects/image, max 16
-    hidden_dim: 128            # 256 -> 128
-    decoder_layers: 4          # 10 -> 4
-    encoder_layers: 3          # 6 -> 3
-    dim_feedforward: 512       # 2048 -> 512
-    encoder_feedforward_dim: 512
-    feature_size: 128
-    mask_feature_size: 128
-    no_object_weight: 1.0
-  batch_size: 20
-  # weight_decay stays at the default 1.0 — 0.05 was measurably worse

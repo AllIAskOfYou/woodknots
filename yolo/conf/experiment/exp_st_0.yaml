@@ -1,12 +1,11 @@
 # @package _global_
 experiment:
   fold: ???
-  model_path: yolo26x-seg.pt
+  model_path: yolo26m-seg.pt
   batch: 16
 dataset:
   resolution: 640
-
 train:
-  freeze: 11
   augmentation:
-    degrees: 45.0
+    scale: 0.8
+    translate: 0.1

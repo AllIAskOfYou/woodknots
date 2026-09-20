@@ -10,7 +10,7 @@ freeze_encoder: true
 unfreeze_stages: null   # e.g. [3] to fine-tune only the deepest ConvNeXt stage
 
 model:
-  _target_: mltools.seg.dinov3.DINOv3MAnet
+  _target_: mltools.seg.models.DINOv3MAnet
   num_classes: 1
 
 optimizer:

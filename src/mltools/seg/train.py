@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from mltools.common.logger import get_logger
-from mltools.common.utils import hash_cfg
+from mltools.common.utils import hash_cfg, pred_complete_marker, train_complete_marker
 from mltools.seg.dataset import (
     SETUP_IRRELEVANT_DATASET_KEYS,
     SegDataset,
@@ -44,13 +44,11 @@ def _checkpoint_dir(cfg: DictConfig) -> Path:
 
 
 def _train_complete_marker(cfg: DictConfig) -> Path:
-    """Lightning's ModelCheckpoint filename embeds the epoch/metric value
-    (best-model-{epoch}-{val_dice}.ckpt), so unlike yolo's fixed best.pt
-    there's no single fixed filename to check for completion. This marker
-    is touched only as the very last step of a successful train() call, so
-    an interrupted run is correctly detected as incomplete and retrained
-    from scratch rather than silently treated as done."""
-    return _checkpoint_dir(cfg) / ".complete"
+    return train_complete_marker(cfg.paths.run_dir)
+
+
+def _pred_complete_marker(cfg: DictConfig) -> Path:
+    return pred_complete_marker(cfg.paths.run_dir)
 
 
 def train(cfg: DictConfig) -> None:
@@ -61,6 +59,12 @@ def train(cfg: DictConfig) -> None:
             f"Training already completed (found {marker}), skipping."
         )
         return
+
+    # Seeds torch (decoder/head init + DataLoader shuffle order), numpy and
+    # python. The albumentations Composes and SegDataset's own generator are
+    # seeded separately below — neither reads a global seed.
+    seed = cfg.seed
+    L.seed_everything(seed, workers=True)
 
     if cfg.dataset.resolution < cfg.train.resolution:
         raise ValueError(
@@ -77,13 +81,13 @@ def train(cfg: DictConfig) -> None:
         metadata = json.load(f)
     channel_index = metadata["channel_names"].index(cfg.train.class_name)
 
-    train_cases, val_cases = write_fold_split(
+    train_cases, val_cases, _ = write_fold_split(
         dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold
     )
 
     preprocessing = get_preprocessing_transform(cfg.train.preprocessing)
-    train_transform = get_train_transform(cfg.train.augmentation)
-    val_transform = get_val_transform(cfg.train.augmentation)
+    train_transform = get_train_transform(cfg.train.augmentation, seed=seed)
+    val_transform = get_val_transform(cfg.train.augmentation, seed=seed)
 
     train_dataset = SegDataset(
         dataset_dir,
@@ -93,6 +97,7 @@ def train(cfg: DictConfig) -> None:
         transform=train_transform,
         class_groups=cfg.train.class_groups,
         cache_amount=1.0,
+        seed=seed,
     )
     val_dataset = SegDataset(
         dataset_dir,
@@ -170,14 +175,15 @@ def train(cfg: DictConfig) -> None:
 
 
 def predict(cfg: DictConfig) -> None:
-    pred_dir = Path(cfg.paths.run_dir) / "predictions"
-    if pred_dir.exists() and any(pred_dir.iterdir()):
+    pred_marker = _pred_complete_marker(cfg)
+    if pred_marker.exists():
         logger.info(
             f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] "
-            f"Predictions already generated (found {pred_dir}), skipping."
+            f"Predictions already generated (found {pred_marker}), skipping."
         )
         return
 
+    pred_dir = Path(cfg.paths.run_dir) / "predictions"
     marker = _train_complete_marker(cfg)
     if not marker.exists():
         raise RuntimeError(
@@ -194,7 +200,9 @@ def predict(cfg: DictConfig) -> None:
         metadata = json.load(f)
     channel_index = metadata["channel_names"].index(cfg.train.class_name)
 
-    _, val_cases = write_fold_split(dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold)
+    # Predictions are made on the held-out test partition only; the val
+    # partition was already used to select the checkpoint loaded below.
+    _, _, test_cases = write_fold_split(dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold)
 
     ckpts = sorted(_checkpoint_dir(cfg).glob("best-model-*.ckpt"))
     if len(ckpts) != 1:
@@ -217,9 +225,9 @@ def predict(cfg: DictConfig) -> None:
     # identity when preprocessing.mask_image is null.
     preprocessing = get_preprocessing_transform(cfg.train.preprocessing)
     logger.info(
-        f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating validation predictions..."
+        f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating test predictions..."
     )
-    for case_id in val_cases:
+    for case_id in test_cases:
         image, label = load_case(dataset_dir, case_id)
         # label is still the full multi-channel stack here, so channel indices
         # in preprocessing refer to the same channels as in training. Only the
@@ -242,3 +250,5 @@ def predict(cfg: DictConfig) -> None:
             gt_channel = mapped
         gt_mask = (gt_channel > 0.5).astype(np.uint8)
         cv2.imwrite(str(gt_dir / f"{case_id}.png"), gt_mask)
+
+    pred_marker.touch()

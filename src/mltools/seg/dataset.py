@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 
@@ -9,6 +8,7 @@ import tqdm
 from PIL import Image
 from torch.utils.data import Dataset
 
+from mltools.common.splits import get_split
 from mltools.seg.coco2custom import COCO2CustomConvertor
 
 # ensure_formatted bakes every COCO category into a TIFF channel regardless
@@ -54,12 +54,14 @@ def ensure_formatted(local_dir: str, ds_hash: str, ds_name: str, data_root: str)
     return str(dataset_dir)
 
 
-def write_fold_split(dataset_dir: str, folds_path: str, fold: int) -> tuple[list[str], list[str]]:
-    """Reads the shared folds file (same split_k5_s42_optimal.json nnunet/yolo
-    use) and returns (train_cases, val_cases) id lists for this fold."""
-    folds = json.loads(Path(folds_path).read_text())
-    split = folds[fold]
-    return split["train"], split["val"]
+def write_fold_split(
+    dataset_dir: str, folds_path: str, fold: int
+) -> tuple[list[str], list[str], list[str]]:
+    """(train_cases, val_cases, test_cases) for split `fold` of the shared
+    folds file (same one nnunet/yolo use), see mltools.common.splits.get_split:
+    val selects the checkpoint, test is only predicted on for evaluation."""
+    split = get_split(folds_path, fold)
+    return split["train"], split["val"], split["test"]
 
 
 def load_case(data_path: str, case_id: str) -> tuple[np.ndarray, np.ndarray]:
@@ -81,6 +83,7 @@ class SegDataset(Dataset):
         transform: A.BasicTransform = None,
         cache_amount: float = 1.0,
         class_groups: list = None,
+        seed: int | None = None,
     ):
         self.data_path = data_path
         self.channel_index = channel_index
@@ -98,7 +101,8 @@ class SegDataset(Dataset):
         cache_size = int(len(self.cases) * cache_amount)
         self.cache_size = cache_size
         self.class_groups = class_groups
-        self.rng = np.random.default_rng()
+        # Picks the mosaic partner images; seeded so a run is reproducible.
+        self.rng = np.random.default_rng(seed)
         self.data = [
             self.get_case(data_path, case_id)
             for case_id in tqdm.tqdm(self.cases[:cache_size], desc="Caching data...")

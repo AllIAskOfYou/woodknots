@@ -1,0 +1,14 @@
+# @package _global_
+# ImageNet ResNet-50 (~24M) instead of DINOv3 ConvNeXt-Large (~198M).
+# Same MAnet decoder and head as exp_reference — only the backbone differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  model:
+    _target_: mltools.seg.models.SMPEncoderMAnet
+    encoder_name: resnet50
+    encoder_weights: imagenet
+    num_classes: 1

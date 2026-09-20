@@ -8,7 +8,7 @@ from ultralytics import YOLO, settings
 
 
 from mltools.common.logger import get_logger
-from mltools.common.utils import hash_cfg
+from mltools.common.utils import hash_cfg, pred_complete_marker, train_complete_marker
 from mltools.yolo.dataset import get_class_names, get_dataset_dir, write_fold_split
 
 logger = get_logger(__name__)
@@ -50,49 +50,116 @@ def get_imgsz(cfg: DictConfig) -> int:
     return int(round(cfg.dataset.resolution * IMGSZ_PER_RESOLUTION / 32) * 32)
 
 
+# train.mode: which task the YOLO checkpoint in experiment.model_path solves.
+# "instance" = *-seg.pt, per-object masks; "semantic" = *-sem.pt, one dense
+# class map. Everything else (dataset, splits, two-phase training, scoring) is
+# identical, so the mode only changes how a prediction becomes a label map and
+# whether copy-paste augmentation applies.
+INSTANCE = "instance"
+SEMANTIC = "semantic"
+MODES = (INSTANCE, SEMANTIC)
+
+
+def get_mode(cfg: DictConfig) -> str:
+    mode = cfg.train.get("mode", INSTANCE)
+    if mode not in MODES:
+        raise ValueError(f"Unknown train.mode {mode!r}, expected one of {MODES}.")
+    return mode
+
+
 def _weights_path(cfg: DictConfig) -> Path:
     return Path(cfg.paths.run_dir) / "train" / "weights" / "best.pt"
 
 
 def _train_complete_marker(cfg: DictConfig) -> Path:
-    """best.pt gets written after the first improving epoch, not just at the
-    end — so its mere existence doesn't mean training actually finished (an
-    interrupted run leaves a partial best.pt behind too). This marker is
-    touched only as the very last step of a successful train() call, so an
-    interrupted run is correctly detected as incomplete and retrained from
-    scratch rather than silently treated as done."""
-    return Path(cfg.paths.run_dir) / "train" / ".complete"
+    # best.pt gets written after the first improving epoch, not just at the
+    # end, so its mere existence doesn't mean training actually finished.
+    return train_complete_marker(cfg.paths.run_dir)
+
+
+def _pred_complete_marker(cfg: DictConfig) -> Path:
+    return pred_complete_marker(cfg.paths.run_dir)
 
 
 def _best_fitness(model: YOLO) -> float | None:
     return getattr(getattr(model, "trainer", None), "best_fitness", None)
 
 
-def predict_label_maps(
-    model: YOLO, image_paths: list[Path], num_classes: int, out_dir: Path, device: str, imgsz: int
-) -> None:
-    """Run inference over image_paths and rasterize each result's predicted
-    instance masks into a single-channel label map (background=0, classes
-    1..C), writing out_dir/<case>.png. Lower-confidence detections are
+def _background_id(model: YOLO, num_classes: int) -> int:
+    """YOLO26-sem appends an implicit background class after the declared
+    ones for multi-class datasets (raw ids 0..num_classes-1 are real classes,
+    num_classes is background); for a single-class dataset the raw output is
+    documented to already be background=0/class=1, matching this project's
+    label-map convention with no remap needed. Looked up from the loaded
+    model's own names rather than hardcoded, since this is inferred from
+    Ultralytics' docs, not yet verified against a live model/result — check
+    this against a real run before trusting it silently."""
+    names = getattr(model, "names", None) or {}
+    for idx, name in names.items():
+        if str(name).lower() == "background":
+            return int(idx)
+    return 0 if num_classes == 1 else num_classes
+
+
+def _instance_label_map(result) -> np.ndarray:
+    """Rasterize the result's predicted instance masks into a single-channel
+    label map (background=0, classes 1..C). Lower-confidence detections are
     painted first so higher-confidence ones win on overlap."""
+    h, w = result.orig_shape
+    label_map = np.zeros((h, w), dtype=np.uint8)
+    if result.masks is not None:
+        confs = result.boxes.conf.cpu().numpy()
+        classes = result.boxes.cls.cpu().numpy().astype(int)
+        masks = result.masks.data.cpu().numpy()
+        order = np.argsort(confs)  # ascending -> highest confidence painted last
+        for i in order:
+            label_map[masks[i] > 0.5] = classes[i] + 1
+    return label_map
+
+
+def _semantic_label_map(result, bg_id: int) -> np.ndarray:
+    """The dense per-pixel class map the model already outputs, remapped to
+    the label-map convention (background=0, classes 1..C). No per-object masks
+    to rasterize or order by confidence here."""
+    raw = result.semantic_mask.data.cpu().numpy().astype(np.int32)
+    label_map = raw if bg_id == 0 else np.where(raw == bg_id, 0, raw + 1)
+    return label_map.astype(np.uint8)
+
+
+def predict_label_maps(
+    model: YOLO,
+    image_paths: list[Path],
+    num_classes: int,
+    out_dir: Path,
+    device: str,
+    imgsz: int,
+    mode: str,
+    conf: float,
+    iou: float,
+) -> None:
+    """Run inference over image_paths and write each prediction as a label map
+    to out_dir/<case>.png, per train.mode (see get_mode)."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    # retina_masks=True: masks come back at the original image size with the
-    # letterbox padding already removed. Without it they're at the padded
-    # inference size, and resizing those straight to (w, h) shifts/stretches
-    # them whenever an image's aspect ratio needs padding to a stride multiple.
+    semantic = mode == SEMANTIC
+    # retina_masks=True: instance masks come back at the original image size
+    # with the letterbox padding already removed. Without it they're at the
+    # padded inference size, and resizing those straight to (w, h)
+    # shifts/stretches them whenever an image's aspect ratio needs padding to
+    # a stride multiple. Semantic results are mapped back by Ultralytics
+    # itself, so the flag doesn't apply there.
     results = model.predict(
-        source=[str(p) for p in image_paths], device=device, imgsz=imgsz, verbose=False, retina_masks=True
+        source=[str(p) for p in image_paths],
+        device=device,
+        imgsz=imgsz,
+        verbose=False,
+        # conf/iou gate detections, so they do nothing in semantic mode.
+        **({} if semantic else {"retina_masks": True, "conf": conf, "iou": iou}),
     )
+    bg_id = _background_id(model, num_classes) if semantic else 0
     for path, result in zip(image_paths, results):
-        h, w = result.orig_shape
-        label_map = np.zeros((h, w), dtype=np.uint8)
-        if result.masks is not None:
-            confs = result.boxes.conf.cpu().numpy()
-            classes = result.boxes.cls.cpu().numpy().astype(int)
-            masks = result.masks.data.cpu().numpy()
-            order = np.argsort(confs)  # ascending -> highest confidence painted last
-            for i in order:
-                label_map[masks[i] > 0.5] = classes[i] + 1
+        label_map = (
+            _semantic_label_map(result, bg_id) if semantic else _instance_label_map(result)
+        )
         cv2.imwrite(str(out_dir / f"{path.stem}.png"), label_map)
 
 
@@ -137,10 +204,17 @@ def train(cfg: DictConfig) -> None:
         degrees=aug.degrees,
         translate=aug.translate,
         scale=aug.scale,
-        copy_paste=aug.copy_paste,
-        copy_paste_mode=aug.copy_paste_mode,
         freeze=cfg.train.freeze,
+        seed=cfg.seed,
+        deterministic=cfg.train.deterministic,
     )
+    if get_mode(cfg) == INSTANCE:
+        # copy-paste pastes discrete object instances into images, which isn't
+        # a meaningful operation without per-object instances.
+        shared_kwargs.update(
+            copy_paste=aug.copy_paste,
+            copy_paste_mode=aug.copy_paste_mode,
+        )
     model.train(
         name="train",
         epochs=cfg.train.epochs,
@@ -193,13 +267,15 @@ def predict(cfg: DictConfig) -> None:
             f"Run training first."
         )
 
-    pred_dir = Path(cfg.paths.run_dir) / "predictions"
-    if pred_dir.exists() and any(pred_dir.iterdir()):
+    pred_marker = _pred_complete_marker(cfg)
+    if pred_marker.exists():
         logger.info(
             f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] "
-            f"Predictions already generated (found {pred_dir}), skipping."
+            f"Predictions already generated (found {pred_marker}), skipping."
         )
         return
+
+    pred_dir = Path(cfg.paths.run_dir) / "predictions"
 
     dataset_dir = get_dataset_dir(cfg.dataset.data_root, cfg.dataset.name, hash_cfg(cfg.dataset))
     class_names = get_class_names(cfg.dataset.label)
@@ -209,21 +285,27 @@ def predict(cfg: DictConfig) -> None:
     write_fold_split(
         dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold, cfg.paths.run_dir, class_names
     )
-    val_image_paths = [
+    # Predict on the held-out test split only; val already selected best.pt.
+    test_image_paths = [
         Path(line)
-        for line in (Path(cfg.paths.run_dir) / "val.txt").read_text().splitlines()
+        for line in (Path(cfg.paths.run_dir) / "test.txt").read_text().splitlines()
         if line
     ]
 
     device = cfg.experiment.get("device", "cuda:0")
     logger.info(
-        f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating validation predictions..."
+        f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating test predictions..."
     )
     predict_label_maps(
         YOLO(str(weights_path)),
-        val_image_paths,
+        test_image_paths,
         num_classes=len(class_names),
         out_dir=pred_dir,
         device=device,
         imgsz=get_imgsz(cfg),
+        mode=get_mode(cfg),
+        conf=cfg.train.conf,
+        iou=cfg.train.iou,
     )
+
+    pred_marker.touch()

@@ -9,5 +9,5 @@ dataset:
 
 train:
   model:
-    _target_: mltools.seg.dinov3.ConvNeXtMAnet
+    _target_: mltools.seg.models.ConvNeXtMAnet
     num_classes: 1

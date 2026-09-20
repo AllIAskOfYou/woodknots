@@ -1,7 +1,40 @@
 import hashlib
+import os
 from omegaconf import DictConfig, OmegaConf
+from pathlib import Path
 import subprocess
 import logging
+
+
+TRAIN_COMPLETE = ".train_complete"
+PRED_COMPLETE = ".pred_complete"
+
+
+def train_complete_marker(run_dir) -> Path:
+    """Touched as the very last step of a successful train(), so an
+    interrupted run is retrained rather than silently treated as done. Same
+    file name in every framework's run dir, which is what scripts/check_runs.py
+    reports on."""
+    return Path(run_dir) / TRAIN_COMPLETE
+
+
+def pred_complete_marker(run_dir) -> Path:
+    """Touched once every test-case prediction has been written."""
+    return Path(run_dir) / PRED_COMPLETE
+
+
+def symlink_relative(link: Path, target: Path, target_is_directory: bool = False) -> None:
+    """Create `link` pointing at `target` by a path relative to the link's own
+    directory.
+
+    An absolute target would bake in the project root the link was created
+    under, and setup runs inside the enroot container where that root is
+    /workspace — such links resolve inside the container but dangle when the
+    same files are inspected from the login node. Everything here lives under
+    the project root, so a relative path is valid in both."""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    relative = os.path.relpath(Path(target).resolve(), link.parent.resolve())
+    link.symlink_to(relative, target_is_directory=target_is_directory)
 
 
 def hash_string(s: str) -> str:

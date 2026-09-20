@@ -1,10 +1,9 @@
 # @package _global_
 experiment:
   fold: ???
-  model_path: yolo26m-seg.pt
-  batch: 32
+  model_path: yolo26m-sem.pt
+  batch: 16
 dataset:
   resolution: 640
-
 train:
-  freeze: 11
+  mode: semantic
