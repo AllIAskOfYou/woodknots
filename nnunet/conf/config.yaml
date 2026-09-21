@@ -1,8 +1,11 @@
 defaults:
   - env
   - dataset: woodknots
-  - experiment: ???
+  # _self_ before experiment: experiment files must be able to override
+  # root keys set here (e.g. seed). With _self_ last, this file's values
+  # silently won over the experiment's.
   - _self_
+  - experiment: ???
 
 
 framework: "nnunet"

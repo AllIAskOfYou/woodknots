@@ -5,7 +5,7 @@
 #SBATCH --constraint=GPU_GEN:BLACKWELL|GPU_GEN:BLACKWELL_ULTRA
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=0-03:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --ntasks=1
 
 
