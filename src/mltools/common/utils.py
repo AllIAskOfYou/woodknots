@@ -42,6 +42,12 @@ def hash_string(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()[:8]
 
 
+# Dataset keys that only affect the evaluation, never what a formatted dataset
+# directory contains — always left out of hash_cfg, so adding or changing them
+# doesn't orphan existing formatted datasets.
+EVALUATION_ONLY_KEYS = ("eval_confidences",)
+
+
 def hash_cfg(cfg: DictConfig, exclude_keys: list[str] | None = None) -> str:
     """Generate an 8 digit hex hash of a DictConfig.
 
@@ -58,8 +64,8 @@ def hash_cfg(cfg: DictConfig, exclude_keys: list[str] | None = None) -> str:
     # filtered-then-resolved DictConfig built from a subset of keys would
     # lose that outer context and fail to resolve.
     resolved = OmegaConf.to_container(cfg, resolve=True)
-    if exclude_keys:
-        resolved = {k: v for k, v in resolved.items() if k not in exclude_keys}
+    exclude = set(exclude_keys or ()) | set(EVALUATION_ONLY_KEYS)
+    resolved = {k: v for k, v in resolved.items() if k not in exclude}
     yaml = OmegaConf.to_yaml(OmegaConf.create(resolved), sort_keys=True)
     return hash_string(yaml)
 

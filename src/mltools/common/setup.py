@@ -5,6 +5,7 @@ from omegaconf import OmegaConf
 from pathlib import Path
 
 from mltools.common.coco_dataset import COCODataset, resize_dataset
+from mltools.common.hf import hash_dataset
 from mltools.common.utils import hash_cfg
 
 
@@ -49,6 +50,15 @@ def collect_dataset_variants(framework_dir: Path, exclude_keys: list[str] | None
 def get_resized_dir(data_dir: str, resolution: int) -> str:
     resized_dir = Path(data_dir).parent / "resized" / f"short_side_{resolution}"
     return str(resized_dir)
+
+
+def get_annotations_path(dataset_cfg) -> str:
+    """The resized annotations.json every framework formats its data from —
+    the ground truth of the evaluation. Same path ensure_dataset +
+    ensure_resized produce, computed without downloading anything."""
+    ds_hash = hash_dataset(dataset_cfg.data_root, dataset_cfg.hf_repo_id, dataset_cfg.hf_revision)
+    raw_dir = Path(dataset_cfg.data_root) / "dataset" / ds_hash / "raw"
+    return str(Path(get_resized_dir(str(raw_dir), dataset_cfg.resolution)) / "annotations.json")
 
 
 def ensure_resized(dataset_dir: str, resolution: int) -> str:

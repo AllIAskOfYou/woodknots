@@ -1,6 +1,0 @@
-# @package _global_
-experiment:
-  fold: ???
-dataset:
-  resolution: 512
-seed: 4

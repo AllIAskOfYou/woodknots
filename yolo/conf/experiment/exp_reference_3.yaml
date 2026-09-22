@@ -1,8 +1,0 @@
-# @package _global_
-experiment:
-  fold: ???
-  model_path: yolo26m-seg.pt
-  batch: 16
-dataset:
-  resolution: 640
-seed: 3

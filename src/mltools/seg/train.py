@@ -9,6 +9,7 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 from omegaconf import DictConfig
 from pytorch_lightning.loggers import TensorBoardLogger
 
+from mltools.common.instances import make_instances, save_instances
 from mltools.common.logger import get_logger
 from mltools.common.utils import hash_cfg, pred_complete_marker, train_complete_marker
 from mltools.seg.dataset import (
@@ -196,10 +197,6 @@ def predict(cfg: DictConfig) -> None:
         cfg.dataset.name,
         hash_cfg(cfg.dataset, exclude_keys=SETUP_IRRELEVANT_DATASET_KEYS),
     )
-    with open(Path(dataset_dir) / "metadata.json") as f:
-        metadata = json.load(f)
-    channel_index = metadata["channel_names"].index(cfg.train.class_name)
-
     # Predictions are made on the held-out test partition only; the val
     # partition was already used to select the checkpoint loaded below.
     _, _, test_cases = write_fold_split(dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold)
@@ -215,11 +212,10 @@ def predict(cfg: DictConfig) -> None:
     module.eval()
     module.to(device)
 
-    gt_dir = Path(cfg.paths.run_dir) / "gt_masks"
+    # Ground truth is not written here: the evaluation builds it from the
+    # annotations, identically for every framework (mltools.common.evaluate).
     pred_dir.mkdir(parents=True, exist_ok=True)
-    gt_dir.mkdir(parents=True, exist_ok=True)
 
-    class_groups = cfg.train.class_groups
     # Same preprocessing SegDataset applies during training/validation, so the
     # model is evaluated on the input distribution it was trained on. An
     # identity when preprocessing.mask_image is null.
@@ -227,11 +223,12 @@ def predict(cfg: DictConfig) -> None:
     logger.info(
         f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating test predictions..."
     )
+    native_instances = hasattr(module.model, "predict_instances")
     for case_id in test_cases:
         image, label = load_case(dataset_dir, case_id)
         # label is still the full multi-channel stack here, so channel indices
         # in preprocessing refer to the same channels as in training. Only the
-        # image is taken; the ground truth written below stays unmasked.
+        # image is taken.
         image = preprocessing(image=image, mask=label)["image"]
 
         transformed = INFERENCE_TRANSFORM(image=image)
@@ -241,14 +238,14 @@ def predict(cfg: DictConfig) -> None:
         pred_mask = (pred.squeeze().cpu().numpy() > 0.5).astype(np.uint8)
         cv2.imwrite(str(pred_dir / f"{case_id}.png"), pred_mask)
 
-        gt_channel = label[..., channel_index]
-        if class_groups:
-            mapped = np.zeros_like(gt_channel)
-            for group in class_groups:
-                for class_value in group.classes:
-                    mapped[gt_channel == class_value] = group.value
-            gt_channel = mapped
-        gt_mask = (gt_channel > 0.5).astype(np.uint8)
-        cv2.imwrite(str(gt_dir / f"{case_id}.png"), gt_mask)
+        # Instance-native models (Mask2Former) also store their own instances,
+        # which the evaluation scores next to the label map's connected
+        # components (mltools.common.evaluate: gms vs gms_instances).
+        if native_instances:
+            masks, labels, scores = module.model.predict_instances(image_t)[0]
+            save_instances(
+                pred_dir / f"{case_id}.npz",
+                make_instances(masks.numpy(), labels.numpy(), scores.numpy(), shape=pred_mask.shape),
+            )
 
     pred_marker.touch()

@@ -543,3 +543,50 @@ class DINOv3Mask2Former(nn.Module):
 
     def forward(self, x):
         return self._dense_logits(self.model(pixel_values=x), x.shape[-2:])
+
+    # Keep threshold of transformers' Mask2FormerImageProcessor
+    # .post_process_instance_segmentation (its default), not tuned on our data.
+    INSTANCE_SCORE_THRESHOLD = 0.5
+
+    @torch.no_grad()
+    def predict_instances(self, x):
+        """Mask2Former's own instances, for final predictions only (seg's
+        predict() calls this when a model has it; training and the logged
+        metrics use forward()).
+
+        One pass over the whole image, since instances can't be blended across
+        sliding windows the way dense logits are; the input is padded to a
+        multiple of the backbone stride and the masks cropped back. The
+        post-processing is transformers' post_process_instance_segmentation
+        rule: each query's best class (no-object excluded) scored by class
+        probability x mean mask probability inside its mask, masks = logit > 0,
+        kept if the score reaches INSTANCE_SCORE_THRESHOLD and the mask is
+        non-empty. Unlike transformers, masks are binarised at the image
+        resolution rather than at a fixed 384x384 and then upsampled.
+
+        x: (B, 3, H, W) normalised images. Returns one (masks (N, H, W) bool,
+        labels (N,) in 1..num_classes, scores (N,)) tuple per image, on CPU.
+        Overlapping instances stay separate."""
+        h, w = x.shape[-2:]
+        stride = 32
+        x = F.pad(x, (0, (-w) % stride, 0, (-h) % stride))
+        outputs = self.model(pixel_values=x)
+        mask_logits = F.interpolate(
+            outputs.masks_queries_logits, size=x.shape[-2:], mode="bilinear", align_corners=False
+        )[..., :h, :w]
+        class_probs = outputs.class_queries_logits.softmax(dim=-1)[..., :-1]  # drop no-object
+
+        results = []
+        for probs, logits in zip(class_probs, mask_logits):
+            num_queries, num_classes = probs.shape
+            scores, flat = probs.flatten().topk(num_queries)
+            query = torch.div(flat, num_classes, rounding_mode="floor")
+            labels = flat % num_classes + 1
+            logits = logits[query]
+            masks = logits > 0
+            area = masks.flatten(1).sum(1)
+            mask_scores = (logits.sigmoid() * masks).flatten(1).sum(1) / (area + 1e-6)
+            scores = scores * mask_scores
+            keep = (scores >= self.INSTANCE_SCORE_THRESHOLD) & (area > 0)
+            results.append((masks[keep].cpu(), labels[keep].cpu(), scores[keep].cpu()))
+        return results

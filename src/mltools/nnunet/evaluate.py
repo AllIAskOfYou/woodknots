@@ -2,7 +2,7 @@ import json
 from omegaconf import DictConfig
 from pathlib import Path
 
-from mltools.common.evaluate import evaluate_segmentation, check_dir_ready
+from mltools.common.evaluate import check_dir_ready, evaluate_run
 from mltools.common.logger import get_logger
 
 logger = get_logger(__name__)
@@ -17,19 +17,12 @@ def evaluate(cfg: DictConfig) -> None:
     # Test-partition predictions from checkpoint_best (see train.predict), not
     # nnU-Net's own validation/ export, which covers the val partition.
     pred_dir = Path(cfg.paths.run_dir) / "predictions"
-    gt_dir = Path(cfg.paths.nnunet.raw) / dataset_name / "labelsTr"
-
     check_dir_ready(pred_dir, "Prediction", logger=logger)
-    check_dir_ready(gt_dir, "Ground-truth", logger=logger)
 
     logger.info(
         f"[{cfg.experiment.name} | {dataset_name} | fold {fold}] Evaluating predictions..."
     )
-    results = evaluate_segmentation(
-        pred_dir=str(pred_dir),
-        gt_dir=str(gt_dir),
-        class_names=cfg.dataset.class_names,
-    )
+    results = evaluate_run(cfg, pred_dir)
     
     rounded = {k: round(v, 2) for k, v in results["metrics"].items()}
     logger.info(f"Results: {rounded}")

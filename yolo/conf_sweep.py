@@ -23,7 +23,7 @@ from pathlib import Path
 from hydra import initialize_config_dir
 from ultralytics import YOLO
 
-from mltools.common.evaluate import evaluate_segmentation
+from mltools.common.evaluate import evaluate_run
 from mltools.common.setup import compose_with_hydra_config
 from mltools.common.utils import hash_cfg
 from mltools.yolo.dataset import get_class_names, get_dataset_dir, write_fold_split
@@ -77,11 +77,7 @@ def sweep_fold(cfg, confs: list[float]) -> dict[float, dict]:
             conf=conf,
             iou=cfg.train.iou,
         )
-        results = evaluate_segmentation(
-            pred_dir=str(pred_dir),
-            gt_dir=str(Path(dataset_dir) / "gt_masks"),
-            class_names=list(class_names.values()),
-        )
+        results = evaluate_run(cfg, pred_dir)
         out[conf] = results["metrics"]
         logging.info(f"fold {cfg.experiment.fold} conf={conf}: {results['metrics']}")
     return out

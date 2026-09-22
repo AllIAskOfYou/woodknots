@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import torch
 from typing import Literal
-from .metric import Metric
+from .metric import Metric, _average_classes
 
 
 def _compute_instance_gms(preds_alpha, targets_alpha, iou_threshold=0.5):
@@ -96,6 +96,63 @@ def _compute_instance_gms(preds_alpha, targets_alpha, iou_threshold=0.5):
     false_negatives = num_targets - true_positives
 
     return true_positives, false_positives, false_negatives
+
+
+def _bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
+    """(y0, y1, x0, x1), end-exclusive; all zero for an empty mask."""
+    rows, cols = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
+    if len(rows) == 0:
+        return 0, 0, 0, 0
+    return rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
+
+
+def _match_instances(pred_masks, pred_scores, gt_masks, iou_threshold=0.5):
+    """Greedy matching of given instance masks — the rule of
+    _compute_instance_gms, applied to instances instead of connected
+    components: predictions in descending score order each take the unmatched
+    target with the highest IoU, a match if it reaches iou_threshold.
+    Instances may overlap. -> (tp, fp, fn)"""
+    if len(pred_masks) == 0:
+        return 0, 0, len(gt_masks)
+    gt_boxes = [_bbox(m) for m in gt_masks]
+    gt_areas = [int(m.sum()) for m in gt_masks]
+    matched = set()
+    tp = 0
+    for p in np.argsort(-np.asarray(pred_scores), kind="stable"):
+        p_mask = pred_masks[p]
+        py0, py1, px0, px1 = _bbox(p_mask)
+        p_area = int(p_mask.sum())
+        best_iou, best_t = 0.0, -1
+        for t, (ty0, ty1, tx0, tx1) in enumerate(gt_boxes):
+            if t in matched or not (py0 < ty1 and ty0 < py1 and px0 < tx1 and tx0 < px1):
+                continue
+            y0, y1, x0, x1 = max(py0, ty0), min(py1, ty1), max(px0, tx0), min(px1, tx1)
+            inter = int(np.logical_and(p_mask[y0:y1, x0:x1], gt_masks[t][y0:y1, x0:x1]).sum())
+            iou = inter / (p_area + gt_areas[t] - inter + 1e-7)
+            if iou > best_iou:
+                best_iou, best_t = iou, t
+        if best_iou >= iou_threshold:
+            tp += 1
+            matched.add(best_t)
+    return tp, len(pred_masks) - tp, len(gt_masks) - tp
+
+
+def instance_gms(pred, gt, num_classes: int, iou_threshold: float = 0.5, average="macro") -> float:
+    """GMS on instances (mltools.common.instances.Instances): per foreground
+    class, F1 = 2TP / (2TP + FP + FN) over matched instances, averaged over
+    classes with the reduction GMSScore uses (a class with no instances on
+    either side scores 1.0)."""
+    classes = range(1, num_classes + 1)
+    numerator = np.empty((1, num_classes))
+    denominator = np.empty((1, num_classes))
+    for i, c in enumerate(classes):
+        p, t = pred.labels == c, gt.labels == c
+        tp, fp, fn = _match_instances(pred.masks[p], pred.scores[p], gt.masks[t], iou_threshold)
+        numerator[0, i] = 2 * tp
+        denominator[0, i] = 2 * tp + fp + fn
+    support = torch.tensor([[int((gt.labels == c).sum()) for c in classes]])
+    score = _average_classes(torch.from_numpy(numerator), torch.from_numpy(denominator), support, average)
+    return score.nanmean().item()
 
 
 def _greedy_matching_score(inputs: torch.Tensor, targets: torch.Tensor):

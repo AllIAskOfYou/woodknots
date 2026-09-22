@@ -23,10 +23,20 @@ shift
 FOLD="$1"
 shift
 
+# Hydra overrides after `--` (passed through by run.sh / evaluate.sh); --env is
+# only meaningful to the dispatcher. Quoted so they survive `bash -c` below.
+OVERRIDE_ARGS=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --env=*|--) shift ;;
+        *) OVERRIDE_ARGS+=" $(printf '%q' "$1")"; shift ;;
+    esac
+done
+
 
 run_cluster() {
     # Create a container and run the evaluation script inside it.
-    local inner_cmd="export PYTHONUNBUFFERED=1; uv run ${FRAMEWORK}/evaluate.py experiment=${EXPERIMENT} experiment.fold=${FOLD}"
+    local inner_cmd="export PYTHONUNBUFFERED=1; uv run ${FRAMEWORK}/evaluate.py experiment=${EXPERIMENT} experiment.fold=${FOLD}${OVERRIDE_ARGS}"
     local container_name="jobcontainer_nnunet_${SLURM_JOB_ID}_$(hostname)"
 
     if enroot list | grep -qx "${container_name}"; then

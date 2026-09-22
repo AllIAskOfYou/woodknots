@@ -8,6 +8,7 @@ from ultralytics import YOLO, settings
 
 
 from mltools.common.logger import get_logger
+from mltools.common.instances import Instances, make_instances, save_instances
 from mltools.common.utils import hash_cfg, pred_complete_marker, train_complete_marker
 from mltools.yolo.dataset import get_class_names, get_dataset_dir, write_fold_split
 
@@ -117,6 +118,20 @@ def _instance_label_map(result) -> np.ndarray:
     return label_map
 
 
+def _native_instances(result) -> Instances:
+    """The model's own instances, unchanged: one mask per detection that
+    passed the confidence gate, at the original image size (retina_masks),
+    label = class index + 1, score = detection confidence. Unlike the label
+    map, overlapping detections stay separate."""
+    if result.masks is None:
+        return make_instances([], [], shape=result.orig_shape)
+    return make_instances(
+        result.masks.data.cpu().numpy() > 0.5,
+        result.boxes.cls.cpu().numpy().astype(int) + 1,
+        result.boxes.conf.cpu().numpy(),
+    )
+
+
 def _semantic_label_map(result, bg_id: int) -> np.ndarray:
     """The dense per-pixel class map the model already outputs, remapped to
     the label-map convention (background=0, classes 1..C). No per-object masks
@@ -138,7 +153,9 @@ def predict_label_maps(
     iou: float,
 ) -> None:
     """Run inference over image_paths and write each prediction as a label map
-    to out_dir/<case>.png, per train.mode (see get_mode)."""
+    to out_dir/<case>.png, per train.mode (see get_mode). Instance mode also
+    writes the detected instances themselves to out_dir/<case>.npz
+    (mltools.common.instances), which the evaluation scores separately."""
     out_dir.mkdir(parents=True, exist_ok=True)
     semantic = mode == SEMANTIC
     # retina_masks=True: instance masks come back at the original image size
@@ -161,6 +178,8 @@ def predict_label_maps(
             _semantic_label_map(result, bg_id) if semantic else _instance_label_map(result)
         )
         cv2.imwrite(str(out_dir / f"{path.stem}.png"), label_map)
+        if not semantic:
+            save_instances(out_dir / f"{path.stem}.npz", _native_instances(result))
 
 
 def train(cfg: DictConfig) -> None:

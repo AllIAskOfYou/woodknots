@@ -1,14 +1,11 @@
 from pathlib import Path
 
-import cv2
-import numpy as np
 import yaml
 from omegaconf import DictConfig
 from tqdm import tqdm
 
 from mltools.common.coco_dataset import COCODataset
 from mltools.common.logger import make_bar_format
-from mltools.common.masks import mask_to_label_map
 from mltools.common.splits import get_split
 from mltools.common.utils import symlink_relative
 
@@ -97,9 +94,7 @@ def _process_case(
     index: int,
     label_cfg: DictConfig,
     names_to_idx: dict[str, int],
-    num_classes: int,
     labels_dir: Path,
-    gt_masks_dir: Path,
 ) -> None:
     case_id = coco_ds.image_index_to_name(index)
     img_id = coco_ds.ids[index]
@@ -110,21 +105,15 @@ def _process_case(
     anns = coco_ds.coco.loadAnns(ann_ids)
 
     yolo_lines = []
-    mask = np.zeros((img_h, img_w, num_classes), dtype=np.float32)
     for ann in anns:
         cat_name = coco_ds.coco.loadCats(ann["category_id"])[0]["name"]
         confidence = float(ann.get("attributes", {}).get("confidence", 1.0))
         class_indices = classify_annotation(cat_name, confidence, label_cfg, names_to_idx)
         for class_idx in class_indices:
             yolo_lines.extend(get_yolo_line(ann, img_w, img_h, class_idx))
-            m = coco_ds.coco.annToMask(ann).astype(np.float32)
-            mask[:, :, class_idx] = np.maximum(mask[:, :, class_idx], m)
 
     if yolo_lines:
         (labels_dir / f"{case_id}.txt").write_text("\n".join(yolo_lines))
-
-    label_map = mask_to_label_map(mask)
-    cv2.imwrite(str(gt_masks_dir / f"{case_id}.png"), label_map)
 
 
 def ensure_formatted(
@@ -135,7 +124,8 @@ def ensure_formatted(
     data_root: str,
 ) -> str:
     """Fold-independent: symlinks the resized images and writes YOLO labels/
-    plus rasterized gt_masks/ for every case. Marker-file cached, same
+    for every case. (No ground truth: the evaluation builds it from the
+    annotations, identically for every framework.) Marker-file cached, same
     convention as nnunet's ensure_formatted. Directory is named by content
     hash of the dataset config (ds_hash) rather than a manually-assigned
     numeric id — unlike nnU-Net, YOLO's tooling has no requirement for a
@@ -152,9 +142,7 @@ def ensure_formatted(
     )
 
     labels_dir = dataset_dir / "labels"
-    gt_masks_dir = dataset_dir / "gt_masks"
     labels_dir.mkdir(parents=True, exist_ok=True)
-    gt_masks_dir.mkdir(parents=True, exist_ok=True)
 
     images_link = dataset_dir / "images"
     if not images_link.exists():
@@ -162,13 +150,12 @@ def ensure_formatted(
 
     class_names = get_class_names(label_cfg)
     names_to_idx = {name: idx for idx, name in class_names.items()}
-    num_classes = len(class_names)
 
     for index in tqdm(
         range(len(coco_ds)), bar_format=make_bar_format(desc="Formatting cases")
     ):
         _process_case(
-            coco_ds, index, label_cfg, names_to_idx, num_classes, labels_dir, gt_masks_dir
+            coco_ds, index, label_cfg, names_to_idx, labels_dir
         )
 
     marker.touch()
