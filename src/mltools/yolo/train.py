@@ -1,14 +1,15 @@
 import shutil
 from pathlib import Path
 
-import cv2
-import numpy as np
+import torch.nn.functional as F
 from omegaconf import DictConfig
 from ultralytics import YOLO, settings
+from ultralytics.models.yolo.semantic import SemanticSegmentationPredictor
+from ultralytics.utils import ops
 
 
 from mltools.common.logger import get_logger
-from mltools.common.instances import Instances, make_instances, save_instances
+from mltools.common.instances import Instances, make_instances, probs_to_instances, save_instances
 from mltools.common.utils import hash_cfg, pred_complete_marker, train_complete_marker
 from mltools.yolo.dataset import get_class_names, get_dataset_dir, write_fold_split
 
@@ -54,7 +55,7 @@ def get_imgsz(cfg: DictConfig) -> int:
 # train.mode: which task the YOLO checkpoint in experiment.model_path solves.
 # "instance" = *-seg.pt, per-object masks; "semantic" = *-sem.pt, one dense
 # class map. Everything else (dataset, splits, two-phase training, scoring) is
-# identical, so the mode only changes how a prediction becomes a label map and
+# identical, so the mode only changes how predictions become instances and
 # whether copy-paste augmentation applies.
 INSTANCE = "instance"
 SEMANTIC = "semantic"
@@ -86,65 +87,49 @@ def _best_fitness(model: YOLO) -> float | None:
     return getattr(getattr(model, "trainer", None), "best_fitness", None)
 
 
-def _background_id(model: YOLO, num_classes: int) -> int:
-    """YOLO26-sem appends an implicit background class after the declared
-    ones for multi-class datasets (raw ids 0..num_classes-1 are real classes,
-    num_classes is background); for a single-class dataset the raw output is
-    documented to already be background=0/class=1, matching this project's
-    label-map convention with no remap needed. Looked up from the loaded
-    model's own names rather than hardcoded, since this is inferred from
-    Ultralytics' docs, not yet verified against a live model/result — check
-    this against a real run before trusting it silently."""
-    names = getattr(model, "names", None) or {}
-    for idx, name in names.items():
-        if str(name).lower() == "background":
-            return int(idx)
-    return 0 if num_classes == 1 else num_classes
-
-
-def _instance_label_map(result) -> np.ndarray:
-    """Rasterize the result's predicted instance masks into a single-channel
-    label map (background=0, classes 1..C). Lower-confidence detections are
-    painted first so higher-confidence ones win on overlap."""
-    h, w = result.orig_shape
-    label_map = np.zeros((h, w), dtype=np.uint8)
-    if result.masks is not None:
-        confs = result.boxes.conf.cpu().numpy()
-        classes = result.boxes.cls.cpu().numpy().astype(int)
-        masks = result.masks.data.cpu().numpy()
-        order = np.argsort(confs)  # ascending -> highest confidence painted last
-        for i in order:
-            label_map[masks[i] > 0.5] = classes[i] + 1
-    return label_map
-
-
 def _native_instances(result) -> Instances:
     """The model's own instances, unchanged: one mask per detection that
     passed the confidence gate, at the original image size (retina_masks),
-    label = class index + 1, score = detection confidence. Unlike the label
-    map, overlapping detections stay separate."""
+    label = class index + 1, score = detection confidence. Overlapping
+    detections stay separate."""
+    # shape is passed even when there are masks: Ultralytics can return a
+    # masks object holding zero masks (every detection's mask was empty and
+    # filtered out), which leaves nothing to take the image size from.
     if result.masks is None:
         return make_instances([], [], shape=result.orig_shape)
     return make_instances(
         result.masks.data.cpu().numpy() > 0.5,
         result.boxes.cls.cpu().numpy().astype(int) + 1,
         result.boxes.conf.cpu().numpy(),
+        shape=result.orig_shape,
     )
 
 
-def _semantic_label_map(result, bg_id: int) -> np.ndarray:
-    """The dense per-pixel class map the model already outputs, remapped to
-    the label-map convention (background=0, classes 1..C). No per-object masks
-    to rasterize or order by confidence here."""
-    raw = result.semantic_mask.data.cpu().numpy().astype(np.int32)
-    label_map = raw if bg_id == 0 else np.where(raw == bg_id, 0, raw + 1)
-    return label_map.astype(np.uint8)
+class _ProbabilitySemanticPredictor(SemanticSegmentationPredictor):
+    """Ultralytics' semantic predictor, additionally keeping the foreground
+    probability map (result.semantic_probs, (1, H, W) at the original image
+    size) that it otherwise reduces to a class map. Single-class models only:
+    the evaluation requires YOLO's classes to be the benchmark's."""
+
+    def postprocess(self, preds, img, orig_imgs):
+        results = super().postprocess(preds, img, orig_imgs)
+        logits = preds[0] if isinstance(preds, (tuple, list)) else preds
+        for result, pred in zip(results, logits):
+            if pred.ndim != 3 or pred.shape[0] != 1:
+                raise NotImplementedError(
+                    f"probabilities need single-class logits, got {tuple(pred.shape)} "
+                    f"(a multi-class model, or an export with an in-graph argmax)"
+                )
+            pred = pred[None].float()
+            if pred.shape[2:] != img.shape[2:]:
+                pred = F.interpolate(pred, img.shape[2:], mode="bilinear")
+            result.semantic_probs = ops.scale_masks(pred, result.orig_shape)[0].sigmoid()
+        return results
 
 
-def predict_label_maps(
+def predict_instances(
     model: YOLO,
     image_paths: list[Path],
-    num_classes: int,
     out_dir: Path,
     device: str,
     imgsz: int,
@@ -152,34 +137,30 @@ def predict_label_maps(
     conf: float,
     iou: float,
 ) -> None:
-    """Run inference over image_paths and write each prediction as a label map
-    to out_dir/<case>.png, per train.mode (see get_mode). Instance mode also
-    writes the detected instances themselves to out_dir/<case>.npz
-    (mltools.common.instances), which the evaluation scores separately."""
+    """Run inference over image_paths and write each prediction to
+    out_dir/<case>.npz as instances (mltools.common.instances): in instance
+    mode the detected instances; in semantic mode the connected components of
+    the probability map, scored by mean probability."""
     out_dir.mkdir(parents=True, exist_ok=True)
     semantic = mode == SEMANTIC
-    # retina_masks=True: instance masks come back at the original image size
-    # with the letterbox padding already removed. Without it they're at the
-    # padded inference size, and resizing those straight to (w, h)
-    # shifts/stretches them whenever an image's aspect ratio needs padding to
-    # a stride multiple. Semantic results are mapped back by Ultralytics
-    # itself, so the flag doesn't apply there.
+    # retina_masks=True: instance masks at the original image size with the
+    # letterbox padding removed. conf/iou gate detections, so they do nothing
+    # in semantic mode, whose predictor maps the probabilities back itself.
     results = model.predict(
         source=[str(p) for p in image_paths],
+        predictor=_ProbabilitySemanticPredictor if semantic else None,
         device=device,
         imgsz=imgsz,
         verbose=False,
-        # conf/iou gate detections, so they do nothing in semantic mode.
         **({} if semantic else {"retina_masks": True, "conf": conf, "iou": iou}),
     )
-    bg_id = _background_id(model, num_classes) if semantic else 0
     for path, result in zip(image_paths, results):
-        label_map = (
-            _semantic_label_map(result, bg_id) if semantic else _instance_label_map(result)
+        instances = (
+            probs_to_instances(result.semantic_probs.cpu().numpy())
+            if semantic
+            else _native_instances(result)
         )
-        cv2.imwrite(str(out_dir / f"{path.stem}.png"), label_map)
-        if not semantic:
-            save_instances(out_dir / f"{path.stem}.npz", _native_instances(result))
+        save_instances(out_dir / f"{path.stem}.npz", instances)
 
 
 def train(cfg: DictConfig) -> None:
@@ -315,10 +296,9 @@ def predict(cfg: DictConfig) -> None:
     logger.info(
         f"[{cfg.experiment.name} | fold {cfg.experiment.fold}] Generating test predictions..."
     )
-    predict_label_maps(
+    predict_instances(
         YOLO(str(weights_path)),
         test_image_paths,
-        num_classes=len(class_names),
         out_dir=pred_dir,
         device=device,
         imgsz=get_imgsz(cfg),

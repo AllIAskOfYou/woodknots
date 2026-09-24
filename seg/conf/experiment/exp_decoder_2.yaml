@@ -5,6 +5,9 @@ dataset:
   resolution: 512
 
 train:
+  # Mask2Former's final predictions are its whole-image instance pass, so
+  # select the checkpoint on whole-image inference too.
+  inference: whole_image
   model:
     _target_: mltools.seg.models.DINOv3Mask2Former
     num_classes: 1

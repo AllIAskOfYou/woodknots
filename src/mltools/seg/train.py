@@ -9,7 +9,7 @@ from lightning.fabric.utilities.rank_zero import rank_zero_only
 from omegaconf import DictConfig
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from mltools.common.instances import make_instances, save_instances
+from mltools.common.instances import make_instances, probs_to_instances, save_instances
 from mltools.common.logger import get_logger
 from mltools.common.utils import hash_cfg, pred_complete_marker, train_complete_marker
 from mltools.seg.dataset import (
@@ -233,19 +233,19 @@ def predict(cfg: DictConfig) -> None:
 
         transformed = INFERENCE_TRANSFORM(image=image)
         image_t = transformed["image"].unsqueeze(0).to(device)
-        with torch.no_grad():
-            pred = module.forward(image_t)
-        pred_mask = (pred.squeeze().cpu().numpy() > 0.5).astype(np.uint8)
-        cv2.imwrite(str(pred_dir / f"{case_id}.png"), pred_mask)
-
-        # Instance-native models (Mask2Former) also store their own instances,
-        # which the evaluation scores next to the label map's connected
-        # components (mltools.common.evaluate: gms vs gms_instances).
+        # Instance-native models (Mask2Former) store the instances they
+        # predict, from one full-image pass; the others the connected
+        # components of their sliding-window probabilities, scored by mean
+        # probability (mltools.common.instances).
         if native_instances:
             masks, labels, scores = module.model.predict_instances(image_t)[0]
-            save_instances(
-                pred_dir / f"{case_id}.npz",
-                make_instances(masks.numpy(), labels.numpy(), scores.numpy(), shape=pred_mask.shape),
+            instances = make_instances(
+                masks.numpy(), labels.numpy(), scores.numpy(), shape=image_t.shape[-2:]
             )
+        else:
+            with torch.no_grad():
+                probs = module.forward(image_t)[0].cpu().numpy()  # (C, H, W), sigmoid
+            instances = probs_to_instances(probs)
+        save_instances(pred_dir / f"{case_id}.npz", instances)
 
     pred_marker.touch()

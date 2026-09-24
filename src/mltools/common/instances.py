@@ -1,17 +1,19 @@
-"""Instance masks for the evaluation.
+"""Instances: the prediction format of every framework.
 
-Predictions are label maps for every framework (predictions/<case>.png). A
-method that natively predicts instances (YOLO instance mode) additionally
-writes predictions/<case>.npz holding
+Each framework writes one predictions/<case>.npz per test image (save_instances):
 
     masks   (N, H, W) bool     one binary mask per instance, overlaps allowed
-    labels  (N,)      int32    class id per instance, 1..C
+    labels  (N,)      int32    class id per instance, 1..C (benchmark classes)
     scores  (N,)      float32  confidence per instance
 
+Instance-native methods (YOLO instance, Mask2Former) store the instances they
+predict. Semantic methods store the connected components of their thresholded
+probabilities, each scored by its mean probability (probs_to_instances).
+
 Ground-truth instances are never stored: the evaluation rasterises them from
-the annotation polygons (load_gt_instances), one instance per annotation, and
-derives the ground-truth label map from them. Semantic predictions become
-instances by connected components (label_map_to_instances).
+the annotation polygons (load_gt_instances), one instance per annotation. Both
+sides' label maps for the pixel metrics are the union of their instances
+(instances_to_label_map).
 """
 import json
 from pathlib import Path
@@ -35,7 +37,10 @@ class Instances(NamedTuple):
     def shape(self) -> tuple[int, int]:
         return tuple(self.masks.shape[1:])
 
-    def __len__(self) -> int:
+    @property
+    def num_instances(self) -> int:
+        # Not __len__: NamedTuple's _replace/_make use len() to check the
+        # tuple's field count, so overriding it breaks them.
         return len(self.labels)
 
 
@@ -78,7 +83,7 @@ def label_map_to_instances(label_map: np.ndarray) -> Instances:
     8-connected components of each class, every component — of any size — an
     instance. No size filter: any threshold would have to be chosen from the
     data, which includes the test folds. Scores are 1.0 — a label map carries
-    no confidence."""
+    no confidence (probs_to_instances adds them from probabilities)."""
     masks, labels = [], []
     for class_id in np.unique(label_map):
         if class_id == 0:
@@ -90,6 +95,19 @@ def label_map_to_instances(label_map: np.ndarray) -> Instances:
             masks.append(components == component)
             labels.append(int(class_id))
     return make_instances(masks, labels, shape=label_map.shape)
+
+
+def probs_to_instances(probs: np.ndarray) -> Instances:
+    """Instances of a semantic prediction. probs: (C, H, W) class
+    probabilities. Each pixel takes the most probable of background
+    (1 - sum of the class probabilities) and the C classes — for one class
+    exactly probs > 0.5 — and every 8-connected component of each class is an
+    instance, scored by the mean probability of its class inside it."""
+    background = 1.0 - probs.sum(axis=0, keepdims=True)
+    label_map = np.concatenate([background, probs], axis=0).argmax(axis=0).astype(np.uint8)
+    components = label_map_to_instances(label_map)
+    scores = [probs[label - 1][mask].mean() for mask, label in zip(components.masks, components.labels)]
+    return components._replace(scores=np.asarray(scores, dtype=np.float32))
 
 
 def instances_to_label_map(instances: Instances) -> np.ndarray:
@@ -118,21 +136,29 @@ def _annotation_rle(segmentation, h: int, w: int):
 
 
 def load_gt_instances(
-    annotations_path, class_names: list[str], confidences: list[float]
+    annotations_path, class_names: list[str], confidences: list[float], case_ids=None
 ) -> dict[str, Instances]:
     """Ground-truth instances for every image of a COCO annotation file, keyed
     by case id (image file stem): one instance per annotation whose category
     is in class_names (label = position + 1) and whose confidence attribute is
     one of confidences. Polygons are rasterised with pycocotools at the size
     recorded for the image, exactly as every framework's own label writer
-    does, so the union of these masks is the label map those writers produce."""
+    does, so the union of these masks is the label map those writers produce.
+    case_ids limits it to those images (all images when None)."""
     coco = json.loads(Path(annotations_path).read_text())
     category_label = {
         c["id"]: class_names.index(c["name"]) + 1 for c in coco["categories"] if c["name"] in class_names
     }
-    images = {im["id"]: im for im in coco["images"]}
+    wanted = None if case_ids is None else set(case_ids)
+    images = {
+        im["id"]: im
+        for im in coco["images"]
+        if wanted is None or Path(im["file_name"]).stem in wanted
+    }
     per_image: dict[int, list[dict]] = {img_id: [] for img_id in images}
     for ann in coco["annotations"]:
+        if ann["image_id"] not in per_image:
+            continue
         conf = _annotation_confidence(ann)
         if ann["category_id"] in category_label and any(
             abs(conf - c) < CONFIDENCE_TOLERANCE for c in confidences

@@ -31,7 +31,7 @@ from mltools.yolo.train import (
     _weights_path,
     get_imgsz,
     get_mode,
-    predict_label_maps,
+    predict_instances,
     setup_ultralytics,
 )
 
@@ -66,10 +66,9 @@ def sweep_fold(cfg, confs: list[float]) -> dict[float, dict]:
     out = {}
     for conf in confs:
         pred_dir = Path(cfg.paths.run_dir) / "conf_sweep" / f"conf_{conf}"
-        predict_label_maps(
+        predict_instances(
             model,
             test_image_paths,
-            num_classes=len(class_names),
             out_dir=pred_dir,
             device=cfg.experiment.get("device", "cuda:0"),
             imgsz=get_imgsz(cfg),

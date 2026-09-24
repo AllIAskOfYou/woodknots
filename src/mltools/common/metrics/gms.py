@@ -192,7 +192,12 @@ class GMSScore(Metric):
         average: Literal["micro", "macro", "weighted"] = "macro",
         background: bool = False,
     ):
-        super().__init__(soft=True, average=average, background=background)
+        super().__init__(average=average, background=background)
+
+    def _preds(self, logits: torch.Tensor) -> torch.Tensor:
+        """Probabilities, not the hard decision: components are thresholded
+        at 0.5 and scored by their mean probability."""
+        return torch.sigmoid(logits)
 
     def __call__(self, inputs: torch.Tensor, targets: torch.Tensor):
         return _greedy_matching_score(inputs, targets)

@@ -36,7 +36,10 @@ done
 
 run_cluster() {
     # Create a container and run the evaluation script inside it.
-    local inner_cmd="export PYTHONUNBUFFERED=1; uv run ${FRAMEWORK}/evaluate.py experiment=${EXPERIMENT} experiment.fold=${FOLD}${OVERRIDE_ARGS}"
+    # Thread pools default to the node's core count, not the CPUs this job
+    # was granted; on a shared node that oversubscribes them many times over.
+    local threads="${SLURM_CPUS_PER_TASK:-1}"
+    local inner_cmd="export PYTHONUNBUFFERED=1 OMP_NUM_THREADS=${threads} MKL_NUM_THREADS=${threads} OPENBLAS_NUM_THREADS=${threads}; uv run ${FRAMEWORK}/evaluate.py experiment=${EXPERIMENT} experiment.fold=${FOLD}${OVERRIDE_ARGS}"
     local container_name="jobcontainer_nnunet_${SLURM_JOB_ID}_$(hostname)"
 
     if enroot list | grep -qx "${container_name}"; then

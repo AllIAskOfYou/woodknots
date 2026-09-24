@@ -8,6 +8,11 @@ total_epochs: 100
 batch_size: 20
 freeze_encoder: true
 unfreeze_stages: null   # e.g. [3] to fine-tune only the deepest ConvNeXt stage
+# How whole images are predicted, at validation and for the final predictions:
+#   sliding_window  resolution x resolution windows, overlap 0.5, Gaussian blending
+#   whole_image     one pass over the image, zero-padded to a multiple of 32, cropped back
+# (Mask2Former's final predictions always use its own whole-image instance pass.)
+inference: sliding_window
 
 model:
   _target_: mltools.seg.models.DINOv3MAnet
@@ -28,6 +33,10 @@ scheduler:
 loss:
   weight: 0.5
   labels_smoothing: 0.05
+  # true (the setting every run so far used): labels_smoothing is applied to
+  # the targets of both terms. false: only the BCE target is smoothed, the
+  # Dice target stays binary (see SegLoss).
+  smooth_dice_target: true
 
 preprocessing:
   mask_image: null

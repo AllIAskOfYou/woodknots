@@ -52,7 +52,7 @@ def check(framework, exp, fold):
     if not os.path.exists(os.path.join(run_dir, PRED_COMPLETE)):
         return "NO_PREDICTIONS", "predictions did not finish"
 
-    n = len(glob.glob(os.path.join(run_dir, "predictions", "*.png")))
+    n = len(glob.glob(os.path.join(run_dir, "predictions", "*.npz")))
     return "COMPLETED", f"{n} cases"
 
 

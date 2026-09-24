@@ -50,33 +50,35 @@ class Metric(ABC):
 
     # Whether the background channel (index 0) participates in scoring.
     # Instance-level metrics override this — matching connected components
-    # against "everything that isn't an object" is meaningless.
+    # against "everything that isn't an object" is meaningless. The
+    # score_background argument overrides it per instance, which is how the
+    # evaluation gets a foreground-only dice/iou next to the background-
+    # inclusive one.
     scores_background_channel = True
 
     def __init__(
         self,
-        soft: bool = False,
         average: Literal["micro", "macro", "weighted"] = "macro",
         background: bool = False,
+        score_background: bool | None = None,
     ):
-        self.soft = soft
         self.average = average
         self.background = background
+        if score_background is not None:
+            self.scores_background_channel = score_background
 
     @abstractmethod
     def __call__(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         pass
 
+    def _preds(self, logits: torch.Tensor) -> torch.Tensor:
+        """What the statistic is computed on: the hard decision, logit > 0."""
+        return (logits > 0.0).long()
+
     def compute(self, inputs: torch.Tensor, targets: torch.Tensor) -> float:
-        inputs = inputs.detach()
-        targets = targets.detach()
-        if self.soft:
-            preds = torch.sigmoid(inputs)
-        else:
-            preds = inputs > 0.0
-            targets = targets > 0.5
-            preds = preds.long()
-            targets = targets.long()
+        """inputs: (B, C, H, W) logits; targets: (B, C, H, W), > 0.5 = positive."""
+        preds = self._preds(inputs.detach())
+        targets = (targets.detach() > 0.5).long()
         if self.background:
             # Complement of the union of all foreground channels, not of any
             # single one — with C > 1 a per-channel complement would produce

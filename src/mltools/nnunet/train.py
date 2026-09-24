@@ -1,6 +1,8 @@
+import numpy as np
 from omegaconf import DictConfig
 from pathlib import Path
 
+from mltools.common.instances import probs_to_instances, save_instances
 from mltools.common.splits import get_split
 from mltools.common.utils import symlink_relative
 
@@ -70,12 +72,18 @@ def train(cfg: DictConfig) -> None:
 
 
 def predict(cfg: DictConfig) -> None:
-    """Predict the split's held-out test partition into run_dir/predictions
-    with checkpoint_best.pth — the checkpoint nnU-Net selected on the val
-    partition, matching seg's best checkpoint and YOLO's best.pt. nnU-Net's
-    own end-of-training validation/ export covers val, not test, so it isn't
-    used for scoring. nnUNetv2_predict's defaults (step 0.5, Gaussian
-    weighting, mirroring) are the same predictor settings that export uses."""
+    """Predict the split's held-out test partition with checkpoint_best.pth —
+    the checkpoint nnU-Net selected on the val partition, matching seg's best
+    checkpoint and YOLO's best.pt. nnU-Net's own end-of-training validation/
+    export covers val, not test, so it isn't used for scoring.
+    nnUNetv2_predict's defaults (step 0.5, Gaussian weighting, mirroring) are
+    the same predictor settings that export uses.
+
+    nnUNetv2_predict writes its own output (segmentations + softmax
+    probabilities) to run_dir/nnunet_predictions; each case is then converted
+    to the shared instance format in run_dir/predictions/<case>.npz — the
+    connected components of the probabilities, scored by mean probability
+    (mltools.common.instances.probs_to_instances)."""
     fold = cfg.experiment.fold
     dataset_name = f"Dataset{cfg.dataset.id:03d}_{cfg.dataset.name}"
     tag = f"[{cfg.experiment.name} | {dataset_name} | fold {fold}]"
@@ -86,6 +94,7 @@ def predict(cfg: DictConfig) -> None:
         return
 
     test_cases = get_split(cfg.dataset.folds.file_path, fold)["test"]
+    raw_dir = Path(cfg.paths.run_dir) / "nnunet_predictions"
     pred_dir = Path(cfg.paths.run_dir) / "predictions"
 
     checkpoint_path = _fold_dir(cfg) / "checkpoint_best.pth"
@@ -110,7 +119,7 @@ def predict(cfg: DictConfig) -> None:
         "-i",
         str(input_dir),
         "-o",
-        str(pred_dir),
+        str(raw_dir),
         "-d",
         f"{cfg.dataset.id:03d}",
         "-c",
@@ -125,6 +134,7 @@ def predict(cfg: DictConfig) -> None:
         checkpoint_path.name,
         "-device",
         cfg.experiment.get("device", "cuda"),
+        "--save_probabilities",
     ]
     env = build_nnunet_env(
         nnunet_raw=str(cfg.paths.nnunet.raw),
@@ -133,5 +143,15 @@ def predict(cfg: DictConfig) -> None:
     )
     logger.info(f"{tag} Generating test predictions with {checkpoint_path.name}...")
     run_command(predict_args, env=env, logger=logger)
+
+    pred_dir.mkdir(parents=True, exist_ok=True)
+    for case_id in test_cases:
+        # (num_classes + 1, [1,] H, W) softmax, background first; 2D natural
+        # images carry a singleton through-plane axis.
+        with np.load(raw_dir / f"{case_id}.npz") as data:
+            probs = data["probabilities"][1:].astype(np.float32)
+        if probs.ndim == 4:
+            probs = probs[:, 0]
+        save_instances(pred_dir / f"{case_id}.npz", probs_to_instances(probs))
 
     pred_marker.touch()

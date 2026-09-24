@@ -1,0 +1,10 @@
+# @package _global_
+# Whole-image inference instead of sliding windows, at validation (checkpoint
+# selection) and for the final predictions. Everything else matches exp_reference.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  inference: whole_image

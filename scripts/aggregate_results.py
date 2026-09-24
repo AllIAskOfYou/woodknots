@@ -50,12 +50,13 @@ def aggregate(framework: str, experiment: str) -> dict:
 
 def print_summary(summary: dict) -> None:
     print(f"{summary['framework']}/{summary['experiment']} — folds found: {summary['folds_found']}")
-    header = f"{'metric':<12} {'mean':>10} {'std':>10} {'n':>4}"
+    width = max([12, *(len(name) for name in summary["metrics"])])
+    header = f"{'metric':<{width}} {'mean':>10} {'std':>10} {'n':>4}"
     print(header)
     print("-" * len(header))
     for name, stats in summary["metrics"].items():
         mean_str = f"{stats['mean']:.4f}" if stats["mean"] is not None else "n/a"
-        print(f"{name:<12} {mean_str:>10} {stats['std']:>10.4f} {stats['n']:>4}")
+        print(f"{name:<{width}} {mean_str:>10} {stats['std']:>10.4f} {stats['n']:>4}")
 
 
 def main() -> int:

@@ -3,6 +3,7 @@ import lightning as L
 from hydra.utils import instantiate
 from monai.inferers import sliding_window_inference
 import torch
+import torch.nn.functional as F
 import numpy as np
 
 from mltools.seg.losses import SegLoss
@@ -13,6 +14,15 @@ from pathlib import Path
 from omegaconf import DictConfig
 
 logger = get_logger(__name__)
+
+# train.inference: how a whole image is predicted, at validation (checkpoint
+# selection) and for the final predictions alike.
+SLIDING_WINDOW = "sliding_window"  # resolution x resolution windows, overlap 0.5, Gaussian blending
+WHOLE_IMAGE = "whole_image"  # one pass over the image, padded to a multiple of INFERENCE_STRIDE
+INFERENCE_MODES = (SLIDING_WINDOW, WHOLE_IMAGE)
+# Output stride of every backbone here (ConvNeXt, ResNet, MiT): inputs whose
+# sides aren't multiples of it would misalign the decoder's skip connections.
+INFERENCE_STRIDE = 32
 
 
 def denormalize_image(image_tensor):
@@ -41,17 +51,23 @@ class SegModule(L.LightningModule):
             self.model.encoder.train()
             self.model.unfreeze_encoder_stages(list(unfreeze_stages))
         self.cfg = module_cfg
-        self.loss = SegLoss(start_weight=0.5, end_weight=0.5, labels_smoothing=module_cfg.loss.labels_smoothing)
+        self.inference = module_cfg.get("inference", SLIDING_WINDOW)
+        if self.inference not in INFERENCE_MODES:
+            raise ValueError(f"Unknown train.inference {self.inference!r}, expected one of {INFERENCE_MODES}.")
+        self.loss = SegLoss(
+            start_weight=0.5,
+            end_weight=0.5,
+            labels_smoothing=module_cfg.loss.labels_smoothing,
+            smooth_dice_target=module_cfg.loss.get("smooth_dice_target", True),
+        )
         self.save_hyperparameters(module_cfg)
         # This module emits a single foreground channel, so background=True
         # synthesises the background channel these metrics average over —
         # reproducing the metric definitions the pre-restructure runs used
-        # (val_dice here is background-inclusive; val_dice_nobg is not).
+        # (val_dice here is background-inclusive).
         self.metrics = {
-            "dice": DiceScore(soft=False, background=True, average="macro"),
-            #"dice_nobg": DiceScore(soft=False, background=False, average="macro"),
-            #"dice_soft": DiceScore(soft=True, background=True, average="macro"),
-            "iou": IoUScore(soft=False, background=True, average="macro"),
+            "dice": DiceScore(background=True, average="macro"),
+            "iou": IoUScore(background=True, average="macro"),
             "gms": GMSScore(background=True, average="macro"),
         }
         self.should_validate = True
@@ -68,10 +84,15 @@ class SegModule(L.LightningModule):
             for param in self.model.encoder.parameters():
                 param.requires_grad = True
 
-    def forward(self, x):
-        res = self.cfg.resolution
-        with torch.no_grad():
-            outputs = sliding_window_inference(
+    @torch.no_grad()
+    def infer_logits(self, x: torch.Tensor) -> torch.Tensor:
+        """Logits for whole images, per train.inference (see INFERENCE_MODES).
+        whole_image zero-pads the bottom/right edges — zero is the mean colour
+        after normalisation, the same fill MONAI's sliding window uses — and
+        crops the logits back to the image."""
+        if self.inference == SLIDING_WINDOW:
+            res = self.cfg.resolution
+            return sliding_window_inference(
                 x,
                 roi_size=(res, res),
                 sw_batch_size=4,
@@ -80,8 +101,12 @@ class SegModule(L.LightningModule):
                 overlap=0.5,
                 mode="gaussian",
             )
-        preds = torch.sigmoid(outputs)
-        return preds
+        h, w = x.shape[-2:]
+        padded = F.pad(x, (0, (-w) % INFERENCE_STRIDE, 0, (-h) % INFERENCE_STRIDE))
+        return self.model(padded)[..., :h, :w]
+
+    def forward(self, x):
+        return torch.sigmoid(self.infer_logits(x))
 
     @property
     def _model_computes_loss(self) -> bool:
@@ -163,17 +188,7 @@ class SegModule(L.LightningModule):
             return
 
         images, masks = batch
-        res = self.cfg.resolution
-        with torch.no_grad():
-            outputs = sliding_window_inference(
-                images,
-                roi_size=(res, res),
-                sw_batch_size=4,
-                predictor=self.model,
-                overlap=0.5,
-                mode="gaussian",
-            )
-        outputs = outputs.detach()
+        outputs = self.infer_logits(images).detach()
         masks = masks.detach()
         if batch_idx < 8:
             # save the first batch of masks and outputs for visualization
