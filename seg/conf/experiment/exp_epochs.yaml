@@ -1,0 +1,22 @@
+# @package _global_
+# 300 epochs (reference: 100)
+# Derived from exp_reference: only train.total_epochs differs.
+#
+# Note that this is not purely a longer budget: train.scheduler.num_epochs
+# interpolates ${train.total_epochs}, so the cosine decay is stretched over
+# 300 epochs rather than reaching its tail after 100. That is the intended
+# way to scale the schedule — an unstretched cosine would just repeat the
+# reference run and then train at lr ~0 — but it means a difference here is
+# "longer run with a correspondingly slower decay", not "same run, more
+# epochs".
+#
+# Motivated by the best-checkpoint epochs of the 100-epoch runs: a median of
+# 45 with a few runs still peaking past 90, so the budget binds for some
+# configurations.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  total_epochs: 300

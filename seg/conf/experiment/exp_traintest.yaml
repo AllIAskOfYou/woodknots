@@ -1,0 +1,18 @@
+# @package _global_
+# two-way split, no checkpoint selection (reference: train/val/test + selection)
+# Derived from exp_reference: only dataset.folds.mode differs.
+#
+# The val partition joins training (k-1 partitions instead of k-2, ~20% more
+# data) and the kept checkpoint is the final epoch rather than the one a
+# validation metric picked. Scored on the same test partition as every other
+# experiment, so the two differ only in training data and selection.
+#
+# The per-epoch val_* metrics of this run are computed on the TEST partition.
+# They are logged for inspection — nothing selects on them — but they must not
+# be used to choose any configuration, or the test set stops being held out.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+  folds:
+    mode: train_test

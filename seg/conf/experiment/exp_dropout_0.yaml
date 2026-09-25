@@ -1,0 +1,16 @@
+# @package _global_
+# no coarse dropout (reference: p 0.4, 1-3 holes of 5-15% per side)
+# Derived from exp_reference: only augmentation.coarse_dropout.p differs.
+#
+# The holes are punched into the image but not the mask, so every reference
+# run trains on occluded knots that are still labelled — an occlusion that
+# never occurs at inference. This measures whether that helps or hurts.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  augmentation:
+    coarse_dropout:
+      p: 0.0

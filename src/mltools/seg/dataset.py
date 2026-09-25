@@ -8,7 +8,7 @@ import tqdm
 from PIL import Image
 from torch.utils.data import Dataset
 
-from mltools.common.splits import get_split
+from mltools.common.splits import TRAIN_VAL_TEST, get_split
 from mltools.seg.coco2custom import COCO2CustomConvertor
 
 # ensure_formatted bakes every COCO category into a TIFF channel regardless
@@ -55,12 +55,14 @@ def ensure_formatted(local_dir: str, ds_hash: str, ds_name: str, data_root: str)
 
 
 def write_fold_split(
-    dataset_dir: str, folds_path: str, fold: int
+    dataset_dir: str, folds_path: str, fold: int, mode: str = TRAIN_VAL_TEST
 ) -> tuple[list[str], list[str], list[str]]:
     """(train_cases, val_cases, test_cases) for split `fold` of the shared
     folds file (same one nnunet/yolo use), see mltools.common.splits.get_split:
-    val selects the checkpoint, test is only predicted on for evaluation."""
-    split = get_split(folds_path, fold)
+    val selects the checkpoint, test is only predicted on for evaluation.
+    Under mode="train_test" the selection partition joins training and val is
+    the test partition, logged per epoch but never selected on."""
+    split = get_split(folds_path, fold, mode=mode)
     return split["train"], split["val"], split["test"]
 
 

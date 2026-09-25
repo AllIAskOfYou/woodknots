@@ -32,8 +32,14 @@ class MeshroomCamerasParser:
                 "sensor_width": float(item["sensorWidth"]),
                 "sensor_height": float(item["sensorHeight"]),
                 "focal_length": float(item["focalLength"]),
-                "cx": float(pp[1]),
-                "cy": -float(pp[0]),
+                # Meshroom stores the principal point as an (x, y) offset from
+                # the image centre in its own y-down convention; the renderer
+                # is y-up, the same flip _parse_poses applies to the poses
+                # (diag(1, -1, -1)). So x carries over and y negates. This
+                # previously rotated the offset instead, (x, y) -> (y, -x),
+                # which put the principal point a few pixels off both axes.
+                "cx": float(pp[0]),
+                "cy": -float(pp[1]),
                 "distortion_params": np.array(item["distortionParams"], dtype=np.float32)
             }
         return intrinsics

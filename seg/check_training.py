@@ -55,7 +55,10 @@ def check_fold(cfg, framework: str) -> dict:
         status["state"] = "FAILED" if log_path and _log_has_error(log_path) else "INCOMPLETE"
         return status
 
-    ckpts = list(checkpoint_dir.glob("best-model-*.ckpt"))
+    # train_val_test keeps one selected checkpoint, train_test only final.ckpt.
+    ckpts = list(checkpoint_dir.glob("best-model-*.ckpt")) or [
+        p for p in [checkpoint_dir / "final.ckpt"] if p.exists()
+    ]
     if len(ckpts) != 1 or ckpts[0].stat().st_size < MIN_CHECKPOINT_BYTES:
         status["state"] = "CORRUPTED"
         return status

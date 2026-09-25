@@ -11,6 +11,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 
 from mltools.common.instances import make_instances, probs_to_instances, save_instances
 from mltools.common.logger import get_logger
+from mltools.common.splits import TRAIN_TEST, TRAIN_VAL_TEST
 from mltools.common.utils import hash_cfg, pred_complete_marker, train_complete_marker
 from mltools.seg.dataset import (
     SETUP_IRRELEVANT_DATASET_KEYS,
@@ -19,7 +20,7 @@ from mltools.seg.dataset import (
     load_case,
     write_fold_split,
 )
-from mltools.seg.seg_module import SegModule, denormalize_image
+from mltools.seg.seg_module import CHECKPOINT_METRICS, SegModule, denormalize_image
 from mltools.seg.transforms import (
     INFERENCE_TRANSFORM,
     get_preprocessing_transform,
@@ -52,6 +53,39 @@ def _pred_complete_marker(cfg: DictConfig) -> Path:
     return pred_complete_marker(cfg.paths.run_dir)
 
 
+def _split_mode(cfg: DictConfig) -> str:
+    """dataset.folds.mode: train_val_test selects a checkpoint on a held-out
+    val partition; train_test trains on that partition too and keeps the
+    final epoch instead. Only seg reads it — yolo and nnU-Net always split
+    three ways."""
+    return cfg.dataset.folds.get("mode", TRAIN_VAL_TEST)
+
+
+FINAL_CHECKPOINT_NAME = "final.ckpt"
+
+
+class SaveFinalCheckpoint(L.pytorch.callbacks.Callback):
+    """Write the weights of the LAST epoch, once, when fit() finishes.
+
+    ModelCheckpoint's own last.ckpt is not that: with save_last=True it is
+    written only on epochs where the top-k checkpoint was also written (see
+    lightning/pytorch/callbacks/model_checkpoint.py, "Only save last checkpoint
+    if a checkpoint was actually saved in this step"), so it ends up
+    byte-identical to the selected checkpoint and says nothing about how the
+    run finished. Saving on_train_end costs exactly one write instead of one
+    per epoch, at the price of producing nothing if the job dies mid-run.
+    """
+
+    def __init__(self, dirpath: Path):
+        super().__init__()
+        self.path = Path(dirpath) / FINAL_CHECKPOINT_NAME
+
+    def on_train_end(self, trainer, pl_module) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        trainer.save_checkpoint(str(self.path))
+        logger.info(f"Saved final-epoch checkpoint to {self.path}")
+
+
 def train(cfg: DictConfig) -> None:
     marker = _train_complete_marker(cfg)
     if marker.exists():
@@ -82,8 +116,12 @@ def train(cfg: DictConfig) -> None:
         metadata = json.load(f)
     channel_index = metadata["channel_names"].index(cfg.train.class_name)
 
+    split_mode = _split_mode(cfg)
+    # In train_test mode val_cases IS the test partition: its metrics are
+    # logged every epoch for inspection, but nothing selects on them — the
+    # kept checkpoint is the final epoch (SaveFinalCheckpoint below).
     train_cases, val_cases, _ = write_fold_split(
-        dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold
+        dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold, mode=split_mode
     )
 
     preprocessing = get_preprocessing_transform(cfg.train.preprocessing)
@@ -142,14 +180,33 @@ def train(cfg: DictConfig) -> None:
         version="",
         default_hp_metric=False,
     )
-    checkpoint_callback = L.pytorch.callbacks.ModelCheckpoint(
-        dirpath=str(_checkpoint_dir(cfg)),
-        monitor="val_dice",
-        mode="max",
-        save_top_k=1,
-        filename="best-model-{epoch:02d}-{val_dice:.4f}",
-        save_last=True,
-    )
+    callbacks = []
+    if split_mode == TRAIN_VAL_TEST:
+        # Which validation metric selects the kept checkpoint. All candidates
+        # are higher-is-better, so mode stays "max"; the name also goes into
+        # the filename, which scripts parse for the selected epoch and score.
+        checkpoint_metric = cfg.train.checkpoint_metric
+        if checkpoint_metric not in CHECKPOINT_METRICS:
+            raise ValueError(
+                f"Unknown train.checkpoint_metric {checkpoint_metric!r}, "
+                f"expected one of {CHECKPOINT_METRICS}."
+            )
+        callbacks.append(
+            L.pytorch.callbacks.ModelCheckpoint(
+                dirpath=str(_checkpoint_dir(cfg)),
+                monitor=checkpoint_metric,
+                mode="max",
+                save_top_k=1,
+                filename="best-model-{epoch:02d}-{" + checkpoint_metric + ":.4f}",
+                save_last=True,
+            )
+        )
+
+    # Always kept in train_test mode, where it is the only checkpoint and the
+    # val metrics are the test set's; optional otherwise, where it exists only
+    # to compare selection against taking the final epoch.
+    if split_mode == TRAIN_TEST or cfg.train.get("save_final_checkpoint", False):
+        callbacks.append(SaveFinalCheckpoint(_checkpoint_dir(cfg)))
 
     device_str = cfg.experiment.get("device", "cuda:0")
     device_id = int(device_str.split(":")[1]) if ":" in device_str else 0
@@ -160,7 +217,7 @@ def train(cfg: DictConfig) -> None:
         accelerator="cuda",
         devices=[device_id],
         log_every_n_steps=1,
-        callbacks=[checkpoint_callback],
+        callbacks=callbacks,
         check_val_every_n_epoch=1,
         logger=tb_logger,
         # rich (installed, so Lightning picks RichProgressBar) renders nothing
@@ -199,13 +256,23 @@ def predict(cfg: DictConfig) -> None:
     )
     # Predictions are made on the held-out test partition only; the val
     # partition was already used to select the checkpoint loaded below.
-    _, _, test_cases = write_fold_split(dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold)
+    split_mode = _split_mode(cfg)
+    _, _, test_cases = write_fold_split(
+        dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold, mode=split_mode
+    )
 
-    ckpts = sorted(_checkpoint_dir(cfg).glob("best-model-*.ckpt"))
-    if len(ckpts) != 1:
-        raise RuntimeError(
-            f"Expected exactly one best checkpoint in {_checkpoint_dir(cfg)}, found {len(ckpts)}."
-        )
+    # train_test mode selects no checkpoint, so predictions come from the final
+    # epoch; train_val_test predicts from the one val selected.
+    if split_mode == TRAIN_TEST:
+        ckpts = [_checkpoint_dir(cfg) / FINAL_CHECKPOINT_NAME]
+        if not ckpts[0].exists():
+            raise RuntimeError(f"No final checkpoint at {ckpts[0]}.")
+    else:
+        ckpts = sorted(_checkpoint_dir(cfg).glob("best-model-*.ckpt"))
+        if len(ckpts) != 1:
+            raise RuntimeError(
+                f"Expected exactly one best checkpoint in {_checkpoint_dir(cfg)}, found {len(ckpts)}."
+            )
 
     device = torch.device(cfg.experiment.get("device", "cuda:0"))
     module = SegModule.load_from_checkpoint(str(ckpts[0]), weights_only=False)

@@ -1,0 +1,11 @@
+# @package _global_
+# linear LR decay after warmup (reference: cosine decay)
+# Derived from exp_reference: only the scheduler decay shape differs.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  optimizer:
+    lr: 1.0e-5

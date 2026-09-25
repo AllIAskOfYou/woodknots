@@ -24,6 +24,16 @@ INFERENCE_MODES = (SLIDING_WINDOW, WHOLE_IMAGE)
 # sides aren't multiples of it would misalign the decoder's skip connections.
 INFERENCE_STRIDE = 32
 
+# Foreground-only Dice pooled over the whole validation set, logged once per
+# epoch from accumulated sums (see SegModule.__init__).
+POOLED_DICE_METRIC = "val_dice_fg_pooled"
+# What train.checkpoint_metric may name. Every entry is logged on every
+# validation epoch — including the skipped warmup ones, where it is 0 — and
+# higher is better, which is what ModelCheckpoint(mode="max") assumes.
+# val_loss is deliberately absent: validation_step returns before logging it
+# during the warmup epochs, so monitoring it would fail there.
+CHECKPOINT_METRICS = ("val_dice", "val_iou", "val_gms", POOLED_DICE_METRIC)
+
 
 def denormalize_image(image_tensor):
     # Assuming the image was normalized using ImageNet stats
@@ -70,7 +80,18 @@ class SegModule(L.LightningModule):
             "iou": IoUScore(background=True, average="macro"),
             "gms": GMSScore(background=True, average="macro"),
         }
+        self.validate_from_epoch = module_cfg.get("validate_from_epoch", 0)
         self.should_validate = True
+        # val_dice_fg_pooled: the foreground-only overlap of the whole
+        # validation set, numerator and denominator summed over every image
+        # and divided once — mltools.common.evaluate's dice_fg_pooled. A ratio
+        # of sums is not the mean of per-batch ratios, so unlike self.metrics
+        # it cannot be logged per batch and averaged by Lightning; these
+        # accumulate instead. Buffers so they follow the device, non-persistent
+        # so they never land in a checkpoint.
+        num_classes = module_cfg.model.get("num_classes", 1)
+        self.register_buffer("_val_intersection", torch.zeros(num_classes), persistent=False)
+        self.register_buffer("_val_cardinality", torch.zeros(num_classes), persistent=False)
 
     def freeze_encoder(self):
         if hasattr(self.model, "encoder"):
@@ -144,11 +165,14 @@ class SegModule(L.LightningModule):
         return loss
 
     def on_validation_epoch_start(self):
-        # Skip validation for first 2 epochs
-        if self.current_epoch < 3:
-            self.should_validate = False
-        else:
-            self.should_validate = True
+        # Epochs before train.validate_from_epoch log zeros instead of running
+        # inference, which also keeps them out of checkpoint selection (every
+        # selectable metric is higher-is-better). Measured at 0.3-2% of a run's
+        # wall time for the configurations here, so the default validates from
+        # the start; the knob exists for configurations where it is not.
+        self.should_validate = self.current_epoch >= self.validate_from_epoch
+        self._val_intersection.zero_()
+        self._val_cardinality.zero_()
 
     def on_validation_epoch_end(self):
         """Lightning's progress bar is the only thing that normally surfaces
@@ -158,6 +182,15 @@ class SegModule(L.LightningModule):
         Built from callback_metrics so it follows whatever self.metrics holds."""
         if self.trainer.sanity_checking:
             return
+        # One division, on the sums of the whole validation set. Logged here
+        # rather than in validation_step, and taken from the tensor rather
+        # than from callback_metrics below, which does not yet hold what this
+        # hook logs.
+        pooled_dice = (
+            2 * self._val_intersection / self._val_cardinality.clamp_min(1e-8)
+        ).mean()
+        self.log(POOLED_DICE_METRIC, pooled_dice, prog_bar=True, on_epoch=True)
+
         metrics = self.trainer.callback_metrics
 
         def fmt(keys):
@@ -170,6 +203,7 @@ class SegModule(L.LightningModule):
             line = fmt([f"{prefix}_loss"] + [f"{prefix}_{n}" for n in self.metrics])
             if line:
                 parts.append(line)
+        parts.append(f"{POOLED_DICE_METRIC}={float(pooled_dice):.4f}")
         if "lr" in metrics:
             parts.append(f"lr={float(metrics['lr']):.2e}")
         logger.info(" | ".join(parts))
@@ -190,6 +224,16 @@ class SegModule(L.LightningModule):
         images, masks = batch
         outputs = self.infer_logits(images).detach()
         masks = masks.detach()
+
+        # Foreground channels only, thresholded exactly as the evaluation
+        # thresholds a prediction (logit > 0, i.e. probability > 0.5); no
+        # background channel is synthesised, so an image with no knots
+        # contributes nothing but whatever it predicts falsely.
+        pooled_preds = (outputs > 0.0).float()
+        pooled_targets = (masks > 0.5).float()
+        reduce_axes = (0, *range(2, pooled_targets.ndim))
+        self._val_intersection += (pooled_preds * pooled_targets).sum(dim=reduce_axes)
+        self._val_cardinality += pooled_preds.sum(dim=reduce_axes) + pooled_targets.sum(dim=reduce_axes)
         if batch_idx < 8:
             # save the first batch of masks and outputs for visualization
             # save to the logging directory under "samples" subdirectory

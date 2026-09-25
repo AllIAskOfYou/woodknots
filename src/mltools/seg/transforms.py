@@ -202,12 +202,17 @@ def get_train_transform(cfg: DictConfig, seed: int | None = None):
     return A.Compose(
         [
             A.OneOf([mosaic_branch, non_mosaic_branch], p=1.0),
+            # Kept in the pipeline even at p=0: albumentations draws for the
+            # decision either way, so an ablation that only sets p keeps the
+            # rest of the augmentation stream aligned with the reference run.
             A.CoarseDropout(
-                num_holes_range=(1, 3),
-                hole_height_range=(0.05, 0.15),
-                hole_width_range=(0.05, 0.15),
+                num_holes_range=tuple(cfg.coarse_dropout.num_holes),
+                hole_height_range=tuple(cfg.coarse_dropout.hole_height),
+                hole_width_range=tuple(cfg.coarse_dropout.hole_width),
+                # fill_mask is left unset: the holes are image-only, the mask
+                # keeps whatever it had under them.
                 fill=0,
-                p=0.4,
+                p=cfg.coarse_dropout.p,
             ),
             A.HorizontalFlip(**cfg.horizontal_flip),
             A.VerticalFlip(**cfg.vertical_flip),
