@@ -1,8 +1,0 @@
-# @package _global_
-experiment:
-  fold: ???
-dataset:
-  resolution: 512
-train:
-  save_final_checkpoint: true
-

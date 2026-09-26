@@ -65,24 +65,17 @@ class VoxelGrid:
         self.volume_ids.append(volume_id)
         self.group_ids.append(group_id)
 
-    def find_structures(self, merge_threshold: float = 0.5, map_indexes: bool = True) -> list[list[int]]:
-        """Find connected structures based on overlapping volumes, using
-        union-find so multi-way (transitive) bridging is handled correctly."""
-        num_volumes = len(self.volumes)
-        parent = list(range(num_volumes))
+    def candidate_overlaps(self) -> list[tuple[int, int, float]]:
+        """(i, j, overlap) for every pair of volumes sharing at least one voxel,
+        with overlap = |A and B| / min(|A|, |B|).
 
-        def find(x: int) -> int:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]  # path halving
-                x = parent[x]
-            return x
-
-        def union(a: int, b: int) -> None:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[ra] = rb
-
-        # --- build candidate pairs via inverted index (voxel -> volume ids) ---
+        Only these pairs can ever be merged directly, so they are the whole
+        input to the threshold decision — computing them once is what lets a
+        threshold sweep reuse the expensive part (the inverted index and the set
+        intersections) instead of redoing it per threshold. Pairs of volumes
+        from the same group are excluded: two annotations of one image are
+        distinct objects by construction, so they are never candidates and can
+        only end up in one structure transitively."""
         inverted_index: dict[int, list[int]] = {}
         for i, vol in enumerate(self.volumes):
             for voxel in vol:
@@ -98,21 +91,36 @@ class VoxelGrid:
                     continue  # same group => guaranteed disjoint, never a candidate
                 candidate_pairs.add((a, b) if a < b else (b, a))
 
-        # --- evaluate candidates, merging those that clear the threshold ---
-        for i, j in candidate_pairs:
-            if find(i) == find(j):
-                continue  # already in the same structure, skip redundant work
-
-            intersection_size = len(self.volumes[i] & self.volumes[j])
+        overlaps = []
+        for i, j in sorted(candidate_pairs):
             min_size = min(len(self.volumes[i]), len(self.volumes[j]))
-            if min_size > 0 and intersection_size / min_size > merge_threshold:
-                union(i, j)
+            if min_size > 0:
+                overlaps.append((i, j, len(self.volumes[i] & self.volumes[j]) / min_size))
+        return overlaps
 
-        # --- collect final groups ---
+    def structures_from_pairs(
+        self, pairs: list[tuple[int, int]], map_indexes: bool = True
+    ) -> list[list[int]]:
+        """Connected components of the given volume pairs, via union-find, so
+        multi-way (transitive) bridging is handled correctly. Volumes in no pair
+        come back as structures of one."""
+        num_volumes = len(self.volumes)
+        parent = list(range(num_volumes))
+
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]  # path halving
+                x = parent[x]
+            return x
+
+        for a, b in pairs:
+            ra, rb = find(a), find(b)
+            if ra != rb:
+                parent[ra] = rb
+
         groups: dict[int, list[int]] = {}
         for i in range(num_volumes):
-            root = find(i)
-            groups.setdefault(root, []).append(i)
+            groups.setdefault(find(i), []).append(i)
 
         if map_indexes:
             # remap to volume_ids
@@ -120,6 +128,11 @@ class VoxelGrid:
                 groups[root] = [self.volume_ids[i] for i in members]
 
         return list(groups.values())
+
+    def find_structures(self, merge_threshold: float = 0.5, map_indexes: bool = True) -> list[list[int]]:
+        """Structures of the volumes whose overlap exceeds merge_threshold."""
+        pairs = [(i, j) for i, j, overlap in self.candidate_overlaps() if overlap > merge_threshold]
+        return self.structures_from_pairs(pairs, map_indexes=map_indexes)
 
     def visualize_structures(self, structures: list[list[int]]) -> tuple[np.ndarray, np.ndarray]:
         """Return a tuple of (points, indexes) for visualization. Points are the snapped voxel centers, and indexes are the structure ids."""

@@ -21,7 +21,20 @@ validate_from_epoch: 0
 # comparing checkpoint selection against just taking the end of training.
 # ModelCheckpoint's own last.ckpt does NOT hold them: it is written only on
 # epochs that also wrote the best checkpoint, so it is byte-identical to it.
+# Implied by dataset.folds.mode=train_test, which predicts from final.ckpt.
 save_final_checkpoint: false
+# Exponential moving average of the weights, updated once per epoch and written
+# as final.ckpt in place of the raw final weights. null disables it. decay d
+# averages a trailing window of roughly 1/(1-d) epochs (0.9 -> ~10, 0.95 -> ~20)
+# and recovers what checkpoint selection buys — damping the late training drift
+# — without withholding a partition to select on. Keep the window well inside
+# total_epochs: the average retains d^total_epochs of the very first epoch's
+# weights, which is 0.6% at 0.95 but 13.5% at 0.98 over 100 epochs.
+#
+# 0.95 is the default because it measured best: against the same run with raw
+# final weights (exp_noema) it gained +0.026 gms and +0.014 precision_fg_pooled,
+# both 5/5 folds, and a ~10-epoch window (0.9, exp_ema_0) was not enough.
+ema_decay: 0.95
 freeze_encoder: true
 unfreeze_stages: null   # e.g. [3] to fine-tune only the deepest ConvNeXt stage
 # How whole images are predicted, at validation and for the final predictions:

@@ -1,0 +1,22 @@
+# @package _global_
+# held-out val partition + checkpoint selection (reference: two-way, final epoch)
+# Derived from exp_reference: only dataset.folds.mode differs.
+#
+# Splits 3:1:1 instead of 4:1 — partition i is withheld from training and used
+# to select the kept checkpoint by train.checkpoint_metric, so this run trains
+# on ~20% less data (363 vs 479 cases for fold 0) in exchange for choosing a
+# checkpoint rather than taking the last epoch. Scored on the same test
+# partition as every other experiment.
+#
+# Unlike the default mode, the per-epoch val_* metrics here are a genuine
+# held-out partition, not the test set.
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+  folds:
+    mode: train_val_test
+
+train:
+  save_final_checkpoint: true
+  ema_decay: null

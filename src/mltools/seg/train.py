@@ -86,6 +86,64 @@ class SaveFinalCheckpoint(L.pytorch.callbacks.Callback):
         logger.info(f"Saved final-epoch checkpoint to {self.path}")
 
 
+class SaveAveragedCheckpoint(SaveFinalCheckpoint):
+    """Write an exponential moving average of the trained weights as
+    final.ckpt, instead of the raw final ones.
+
+    Checkpoint selection on a held-out partition is worth ~0.02 dice_fg_pooled
+    over taking the last epoch, because the model drifts in the late phase —
+    but buying it costs a partition of training data, which measured larger
+    still. Averaging damps that drift without withholding anything: the EMA
+    tracks a trailing window of epochs rather than the single final state.
+
+    Updated once per epoch (not per step): with a frozen encoder the decoder is
+    all that moves, and an epoch is the granularity the drift happens on.
+    decay d keeps a window of roughly 1/(1-d) epochs — 0.9 is ~10, 0.98 ~50.
+    The shadow copy lives on the CPU, so this costs a state-dict transfer per
+    epoch and no GPU memory.
+
+    Integer buffers (step counters and the like) are carried over rather than
+    averaged. Validation still runs on the raw weights, so the logged val_*
+    metrics describe the model being averaged, not the average itself.
+    """
+
+    def __init__(self, dirpath: Path, decay: float):
+        super().__init__(dirpath)
+        if not 0.0 < decay < 1.0:
+            raise ValueError(f"train.ema_decay must be in (0, 1), got {decay}")
+        self.decay = decay
+        self.shadow: dict[str, torch.Tensor] | None = None
+
+    @torch.no_grad()
+    def on_train_epoch_end(self, trainer, pl_module) -> None:
+        state = pl_module.state_dict()
+        if self.shadow is None:
+            self.shadow = {k: v.detach().to("cpu", torch.float32, copy=True)
+                           if v.is_floating_point() else v.detach().cpu().clone()
+                           for k, v in state.items()}
+            return
+        for key, value in state.items():
+            if value.is_floating_point():
+                self.shadow[key].mul_(self.decay).add_(
+                    value.detach().to("cpu", torch.float32), alpha=1.0 - self.decay
+                )
+            else:
+                self.shadow[key] = value.detach().cpu().clone()
+
+    @torch.no_grad()
+    def on_train_end(self, trainer, pl_module) -> None:
+        if self.shadow is None:
+            logger.warning("No EMA state was accumulated; saving the raw final weights.")
+        else:
+            current = pl_module.state_dict()
+            pl_module.load_state_dict(
+                {k: self.shadow[k].to(v.device, v.dtype) for k, v in current.items()},
+                strict=True,
+            )
+            logger.info(f"Loaded EMA weights (decay={self.decay}) before saving the final checkpoint.")
+        super().on_train_end(trainer, pl_module)
+
+
 def train(cfg: DictConfig) -> None:
     marker = _train_complete_marker(cfg)
     if marker.exists():
@@ -204,9 +262,17 @@ def train(cfg: DictConfig) -> None:
 
     # Always kept in train_test mode, where it is the only checkpoint and the
     # val metrics are the test set's; optional otherwise, where it exists only
-    # to compare selection against taking the final epoch.
+    # to compare selection against taking the final epoch. train.ema_decay
+    # makes it an average of the trailing epochs rather than the last one —
+    # which is what train_test mode predicts from, while train_val_test still
+    # predicts from the selected checkpoint and only stores this alongside.
+    ema_decay = cfg.train.get("ema_decay", None)
     if split_mode == TRAIN_TEST or cfg.train.get("save_final_checkpoint", False):
-        callbacks.append(SaveFinalCheckpoint(_checkpoint_dir(cfg)))
+        callbacks.append(
+            SaveFinalCheckpoint(_checkpoint_dir(cfg))
+            if ema_decay is None
+            else SaveAveragedCheckpoint(_checkpoint_dir(cfg), float(ema_decay))
+        )
 
     device_str = cfg.experiment.get("device", "cuda:0")
     device_id = int(device_str.split(":")[1]) if ":" in device_str else 0

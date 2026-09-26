@@ -11,4 +11,3 @@ train:
   optimizer:
     encoder_lr: 1.0e-5   # 10x below the decoder lr, standard for fine-tuning
     encoder_weight_decay: 0.05
-  total_epochs: 200
