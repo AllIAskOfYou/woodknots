@@ -69,6 +69,9 @@ class SegModule(L.LightningModule):
             end_weight=0.5,
             labels_smoothing=module_cfg.loss.labels_smoothing,
             smooth_dice_target=module_cfg.loss.get("smooth_dice_target", True),
+            blob_weight=module_cfg.loss.get("blob_weight", 0.0),
+            blob_area_exponent=module_cfg.loss.get("blob_area_exponent", 0.5),
+            blob_min_area_fraction=module_cfg.loss.get("blob_min_area_fraction", 5.0e-4),
         )
         self.save_hyperparameters(module_cfg)
         # This module emits a single foreground channel, so background=True

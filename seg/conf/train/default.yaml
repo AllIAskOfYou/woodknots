@@ -66,6 +66,18 @@ loss:
   # the targets of both terms. false: only the BCE target is smoothed, the
   # Dice target stays binary (see SegLoss).
   smooth_dice_target: true
+  # Area-weighted per-instance Dice (blob loss, Kofler et al. IPMI 2023), ADDED
+  # to bce + pooled dice rather than replacing them. 0 disables it, so the
+  # default loss is exactly what every run so far used.
+  #   blob_weight           lambda; 1.0 matches the two global terms combined
+  #   blob_area_exponent    0 = published blob loss (per-instance, unweighted),
+  #                         0.5 = 1/sqrt(area), 1.0 = 1/area
+  #   blob_min_area_fraction  clamps the weight of the smallest components;
+  #                         5e-4 of the crop is ~151 px at 512x512, the 5th
+  #                         percentile of knot area
+  blob_weight: 0.0
+  blob_area_exponent: 0.5
+  blob_min_area_fraction: 5.0e-4
 
 preprocessing:
   mask_image: null

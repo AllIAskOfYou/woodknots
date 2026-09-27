@@ -1,3 +1,5 @@
+import math
+
 import cv2
 import numpy as np
 import torch
@@ -135,6 +137,60 @@ def _match_instances(pred_masks, pred_scores, gt_masks, iou_threshold=0.5):
             tp += 1
             matched.add(best_t)
     return tp, len(pred_masks) - tp, len(gt_masks) - tp
+
+
+class PooledInstanceF1:
+    """Instance precision, recall and F1 with TP/FP/FN pooled over the whole
+    evaluation, matched greedily at an IoU threshold (_match_instances).
+
+    The per-case instance_gms below scores each image on its own and the
+    evaluation averages those, which gives a knot-free image a perfect 1.0 for
+    predicting nothing — 188 of 600 cases here, a floor of ~0.31 that moves
+    with how quiet a model is rather than with how well it detects. Pooling
+    removes the convention entirely: an image without ground truth can only
+    contribute false positives, nothing is ever undefined, and images weigh by
+    how many instances they hold, the same convention the pooled pixel metrics
+    use. Precision and recall come out of the same counts, so the trade a change
+    makes is visible instead of hidden inside an F1.
+
+    Classes absent from both sides are left out of the class average; if every
+    class is absent, the scores are nan."""
+
+    def __init__(self, num_classes: int, iou_threshold: float = 0.5):
+        self.num_classes = num_classes
+        self.iou_threshold = iou_threshold
+        self.true_positive = [0] * num_classes
+        self.false_positive = [0] * num_classes
+        self.false_negative = [0] * num_classes
+
+    def add(self, pred, gt) -> None:
+        for index in range(self.num_classes):
+            label = index + 1
+            p, t = pred.labels == label, gt.labels == label
+            tp, fp, fn = _match_instances(
+                pred.masks[p], pred.scores[p], gt.masks[t], self.iou_threshold
+            )
+            self.true_positive[index] += tp
+            self.false_positive[index] += fp
+            self.false_negative[index] += fn
+
+    def compute(self) -> dict[str, float]:
+        scores: dict[str, list[float]] = {"f1": [], "precision": [], "recall": []}
+        for index in range(self.num_classes):
+            tp = self.true_positive[index]
+            fp = self.false_positive[index]
+            fn = self.false_negative[index]
+            if tp + fp + fn == 0:  # class absent from both sides: undefined
+                continue
+            scores["f1"].append(2 * tp / (2 * tp + fp + fn))
+            # A class with ground truth but no prediction at all leaves
+            # precision undefined; 0.0 keeps it consistent with its recall.
+            scores["precision"].append(tp / (tp + fp) if tp + fp else 0.0)
+            scores["recall"].append(tp / (tp + fn) if tp + fn else 0.0)
+        return {
+            f"instance_{name}_pooled": (sum(values) / len(values) if values else math.nan)
+            for name, values in scores.items()
+        }
 
 
 def instance_gms(pred, gt, num_classes: int, iou_threshold: float = 0.5, average="macro") -> float:

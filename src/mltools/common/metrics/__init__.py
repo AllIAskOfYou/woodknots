@@ -1,7 +1,7 @@
 from .metric import Metric
 from .dice import DiceScore
 from .iou import IoUScore
-from .gms import GMSScore, instance_gms
+from .gms import GMSScore, PooledInstanceF1, instance_gms
 from .coco_ap import COCOMaskAP
 from .pooled import PooledOverlap
 
@@ -11,6 +11,7 @@ __all__ = [
     "IoUScore",
     "GMSScore",
     "instance_gms",
+    "PooledInstanceF1",
     "COCOMaskAP",
     "PooledOverlap",
 ]

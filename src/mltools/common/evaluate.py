@@ -3,7 +3,14 @@ import torch
 from pathlib import Path
 
 from mltools.common.instances import instances_to_label_map, load_gt_instances, load_instances
-from mltools.common.metrics import COCOMaskAP, Metric, PooledOverlap, STANDARD_METRICS, instance_gms
+from mltools.common.metrics import (
+    COCOMaskAP,
+    Metric,
+    PooledInstanceF1,
+    PooledOverlap,
+    STANDARD_METRICS,
+    instance_gms,
+)
 
 _FOREGROUND_LOGIT = 10.0
 
@@ -49,7 +56,11 @@ def evaluate_segmentation(
       averaged in, dice_fg/iou_fg over the foreground classes only (a case
       with no ground truth and no prediction scores 1.0, a false positive on
       such a case scores 0.0);
-    - gms: on the instances themselves;
+    - instance_precision_pooled, instance_recall_pooled, instance_f1_pooled:
+      greedy instance matching at IoU 0.5 with the counts pooled over all cases
+      (dataset-level, so in "metrics" only). instance_f1 in "per_case" is the
+      same matching scored per image, where a case with no ground truth and no
+      prediction scores 1.0 — kept as a diagnostic;
     - mAP50, mAP50_95: COCO mask AP over all cases at once (dataset-level, so
       in "metrics" only, not "per_case"), at each method's operating point;
     - dice_fg_pooled, iou_fg_pooled, precision_fg_pooled, recall_fg_pooled:
@@ -65,17 +76,30 @@ def evaluate_segmentation(
     gt_instances = load_gt_instances(
         annotations_path, class_names, confidences, case_ids=[p.stem for p in pred_paths]
     )
-    num_classes = len(class_names)
+    predictions = {}
+    for pred_path in pred_paths:
+        if pred_path.stem not in gt_instances:
+            raise RuntimeError(f"No ground truth in {annotations_path} for prediction: {pred_path.name}")
+        predictions[pred_path.stem] = load_instances(pred_path)
+    return score_instances(predictions, gt_instances, len(class_names), metrics=metrics)
 
+
+def score_instances(
+    predictions: dict,
+    gt_instances: dict,
+    num_classes: int,
+    metrics: dict[str, Metric] = STANDARD_METRICS,
+) -> dict:
+    """The scoring half of evaluate_segmentation, on instances already in
+    memory: {case_id: Instances} for both sides. Split out so callers that vary
+    the predictions without rewriting them to disk — a confidence sweep, say —
+    score through exactly the same code path as a normal evaluation."""
     per_case: dict[str, dict[str, float]] = {}
     average_precision = COCOMaskAP(num_classes)
     pooled = PooledOverlap(num_classes)
-    for pred_path in pred_paths:
-        case_id = pred_path.stem
-        if case_id not in gt_instances:
-            raise RuntimeError(f"No ground truth in {annotations_path} for prediction: {pred_path.name}")
+    pooled_instances = PooledInstanceF1(num_classes)
+    for case_id, pred in predictions.items():
         gt = gt_instances[case_id]
-        pred = load_instances(pred_path)
         if pred.shape != gt.shape:
             raise RuntimeError(f"{case_id}: prediction shape {pred.shape} != ground truth {gt.shape}")
         if pred.num_instances and not (1 <= pred.labels.min() and pred.labels.max() <= num_classes):
@@ -86,15 +110,20 @@ def evaluate_segmentation(
         pred_logits = _to_pseudo_logits(pred_label_map, num_classes)
         gt_onehot = _to_pseudo_logits(gt_label_map, num_classes) > 0
         scores = {name: metric.compute(pred_logits, gt_onehot.float()) for name, metric in metrics.items()}
-        scores["gms"] = instance_gms(pred, gt, num_classes)
+        # Per case, so a knot-free case with no prediction scores 1.0 —
+        # a diagnostic, not a headline: instance_*_pooled below is the same
+        # matching with the counts pooled over the evaluation instead.
+        scores["instance_f1"] = instance_gms(pred, gt, num_classes)
         per_case[case_id] = scores
         average_precision.add(pred, gt)
         pooled.add(pred_label_map, gt_label_map)
+        pooled_instances.add(pred, gt)
 
-    names = list(next(iter(per_case.values()))) if per_case else [*metrics, "gms"]
+    names = list(next(iter(per_case.values()))) if per_case else [*metrics, "instance_f1"]
     mean_metrics = {name: sum(scores[name] for scores in per_case.values()) / len(per_case) for name in names}
     mean_metrics |= average_precision.compute()
     mean_metrics |= pooled.compute()
+    mean_metrics |= pooled_instances.compute()
     return {"metrics": mean_metrics, "per_case": per_case}
 
 
