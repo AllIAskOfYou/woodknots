@@ -104,7 +104,7 @@ augmentation:
     p: 0.85
     e2g_ratio: 1.0
   random_crop:
-    scale: [1.0, 1.5]
+    scale: [1.0, 1.0]
     rotation: [-180, 180]
   # Rectangular occlusions punched into the image only — the mask keeps its
   # labels, so the model is trained to predict knots it cannot see. Values are

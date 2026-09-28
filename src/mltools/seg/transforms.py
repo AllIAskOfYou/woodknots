@@ -174,13 +174,10 @@ def get_train_transform(cfg: DictConfig, seed: int | None = None):
                 metadata_key="mosaic_metadata",
                 p=1.0,
             ),
-            A.ColorJitter(**cfg.color_jitter),
-            distortion_transforms,
             # Separate from random_crop.rotation (used by the non-mosaic
             # branch): this was hardcoded to +-25 and existing results depend
             # on it, so the default preserves that exactly.
             A.Rotate(limit=tuple(cfg.mosaic_rotation), p=1.0),
-            A.RandomSizedCrop(**crop_params),
         ],
         p=cfg.mosaic_p,
     )
@@ -188,8 +185,6 @@ def get_train_transform(cfg: DictConfig, seed: int | None = None):
     # Non-mosaic branch
     non_mosaic_branch = A.Compose(
         [
-            A.ColorJitter(**cfg.color_jitter),
-            distortion_transforms,
             A.RandomSizedCrop(**crop_params),
             A.SafeRotate(limit=cfg.random_crop.rotation, p=1.0),
         ],
@@ -216,6 +211,8 @@ def get_train_transform(cfg: DictConfig, seed: int | None = None):
             ),
             A.HorizontalFlip(**cfg.horizontal_flip),
             A.VerticalFlip(**cfg.vertical_flip),
+            distortion_transforms,
+            A.ColorJitter(**cfg.color_jitter),
             A.Normalize(),
             MaskVignetteTransform(
                 steepness=cfg.mask_vignette.steepness,

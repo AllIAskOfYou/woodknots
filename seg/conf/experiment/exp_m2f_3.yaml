@@ -1,0 +1,17 @@
+# @package _global_
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  # Mask2Former's final predictions are its whole-image instance pass, so
+  # select the checkpoint on whole-image inference too (as exp_decoder_2..4).
+  inference: whole_image
+  model:
+    _target_: mltools.seg.models.DINOv3Mask2Former
+    num_classes: 1
+    num_queries: 20
+    no_object_weight: 1.0
+  batch_size: 20
+  # weight_decay stays at the default 1.0 — 0.05 was measurably worse
