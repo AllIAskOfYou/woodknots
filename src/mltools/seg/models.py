@@ -41,13 +41,13 @@ class DINOv3FPN(nn.Module):
         super().__init__()
 
         self.encoder = DINOv3ConvNextBackbone.from_pretrained(
-            "facebook/dinov3-convnext-tiny-pretrain-lvd1689m",
+            "facebook/dinov3-convnext-large-pretrain-lvd1689m",
             out_indices=[1, 2, 3, 4],
             token=_hf_token(),
         )
 
-        # ConvNeXt-Tiny channel counts for stages 0, 1, 2, 3
-        stage_channels = [96, 192, 384, 768]
+        # ConvNeXt-Large channel counts for stages 0, 1, 2, 3
+        stage_channels = [192, 384, 768, 1536]
 
         # Create lateral layers that map EACH stage to out_channels
         self.lateral_layers = nn.ModuleList([
@@ -72,7 +72,7 @@ class DINOv3FPN(nn.Module):
         input_size = x.shape[-2:]
         features = self.encoder(x).feature_maps  # list of 4 tensors
 
-        # 1. Start from the deepest feature map (stage 3, 768 channels)
+        # 1. Start from the deepest feature map (stage 3, 1536 channels)
         p = self.lateral_layers[3](features[3])
 
         # 2. Iterate backwards from stage 2 down to 0
@@ -190,6 +190,27 @@ class ConvNeXtMAnet(DINOv3MAnet):
             raise ValueError(
                 f"encoder stage widths {channels} do not match the decoder's "
                 f"{self.ENCODER_CHANNELS}; pick a ConvNeXt-Large checkpoint."
+            )
+        return encoder
+
+
+class DINOv3BaseMAnet(DINOv3MAnet):
+    """DINOv3MAnet with the ConvNeXt-Base DINOv3 encoder (~88M) instead of
+    Large (~198M): same pretraining, decoder and head, only the encoder size
+    differs."""
+
+    ENCODER_CHANNELS = [128, 256, 512, 1024]
+
+    def _build_encoder(self):
+        encoder = DINOv3ConvNextBackbone.from_pretrained(
+            "facebook/dinov3-convnext-base-pretrain-lvd1689m",
+            out_indices=[1, 2, 3, 4],
+            token=_hf_token(),
+        )
+        channels = list(encoder.channels)
+        if channels != self.ENCODER_CHANNELS:
+            raise ValueError(
+                f"encoder stage widths {channels} do not match the decoder's {self.ENCODER_CHANNELS}."
             )
         return encoder
 

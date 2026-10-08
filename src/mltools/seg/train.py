@@ -54,11 +54,11 @@ def _pred_complete_marker(cfg: DictConfig) -> Path:
 
 
 def _split_mode(cfg: DictConfig) -> str:
-    """dataset.folds.mode: train_val_test selects a checkpoint on a held-out
+    """train.split_mode: train_val_test selects a checkpoint on a held-out
     val partition; train_test trains on that partition too and keeps the
     final epoch instead. Only seg reads it — yolo and nnU-Net always split
     three ways."""
-    return cfg.dataset.folds.get("mode", TRAIN_VAL_TEST)
+    return cfg.train.get("split_mode", TRAIN_VAL_TEST)
 
 
 FINAL_CHECKPOINT_NAME = "final.ckpt"

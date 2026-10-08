@@ -46,6 +46,12 @@ class PooledOverlap:
             self.pred_sum[index] += int(np.count_nonzero(pred))
             self.gt_sum[index] += int(np.count_nonzero(gt))
 
+    def merge(self, other: "PooledOverlap") -> None:
+        """Add another accumulator's counts, as if its cases had been added here."""
+        self.intersection += other.intersection
+        self.pred_sum += other.pred_sum
+        self.gt_sum += other.gt_sum
+
     def compute(self) -> dict[str, float]:
         scores: dict[str, list[float]] = {"dice": [], "iou": [], "precision": [], "recall": []}
         for index in range(self.num_classes):

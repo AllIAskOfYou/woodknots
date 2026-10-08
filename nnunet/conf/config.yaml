@@ -7,6 +7,8 @@ defaults:
   - _self_
   - experiment: ???
 
+# nnU-Net will not use the seed, but for some scripts, the key must be present.
+seed: 0
 
 framework: "nnunet"
 time: ${now:%Y-%m-%d_%H-%M-%S}

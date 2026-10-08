@@ -1,18 +1,7 @@
 # @package _global_
-# Union of the settings that beat the reference by more than run-to-run noise:
-# rotation (exp_rot_1), mild scale/translate (exp_st_0) and reflections
-# (exp_flip). flipud is left at 0 on purpose: with degrees: 180 every rotation
-# is already sampled, so fliplr alone already generates every reflected
-# orientation and flipud adds no new transformation.
 experiment:
   fold: ???
-  model_path: yolo26m-seg.pt
+  model_path: yolo26l-seg.pt
   batch: 16
 dataset:
-  resolution: 640
-train:
-  augmentation:
-    degrees: 180.0
-    fliplr: 0.5
-    scale: 0.8
-    translate: 0.1
+  resolution: 1024

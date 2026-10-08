@@ -62,7 +62,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("framework", help="seg, yolo or nnunet")
     ap.add_argument("--env", default="cluster", choices=["local", "cluster"])
-    ap.add_argument("--num_runs", type=int, default=10)
+    ap.add_argument("--num_runs", type=int, default=5)
     ap.add_argument("--reference_config", default="exp_reference")
     stage = ap.add_mutually_exclusive_group()
     stage.add_argument("--evaluate", action="store_true", help="evaluate every predicted run")

@@ -1,5 +1,6 @@
 """COCO mask AP (pycocotools' COCOeval, iouType="segm") — the reference
-definition of mAP50 and mAP50-95.
+definition of mAP50 and mAP50-95, plus mAP25: the same AP at IoU 0.25, which
+credits a detection that finds a knot but outlines it loosely.
 
 AP is a dataset-level metric: all detections of all images are ranked by score
 into one precision-recall curve, so it is accumulated over the cases of an
@@ -25,8 +26,8 @@ def _rle(mask: np.ndarray) -> dict:
 
 class COCOMaskAP:
     """Accumulates (prediction, ground truth) Instances per image, then
-    compute() -> {"mAP50": AP at IoU 0.5, "mAP50_95": AP averaged over IoU
-    0.50:0.05:0.95}, over all classes, up to 100 detections per image (the
+    compute() -> {"mAP25": AP at IoU 0.25, "mAP50": AP at IoU 0.5,
+    "mAP50_95": AP averaged over IoU 0.50:0.05:0.95}, over all classes, up to 100 detections per image (the
     COCO defaults). Images without ground truth still count: detections on
     them are false positives."""
 
@@ -57,11 +58,28 @@ class COCOMaskAP:
                 "score": float(score),
             })
 
+    def merge(self, other: "COCOMaskAP") -> None:
+        """Append another accumulator's images, renumbered after this one's, as
+        if they had been added here in that order."""
+        image_offset, annotation_offset = len(self.images), len(self.annotations)
+        self.images += [{**image, "id": image["id"] + image_offset} for image in other.images]
+        self.annotations += [
+            {**ann, "id": ann["id"] + annotation_offset, "image_id": ann["image_id"] + image_offset}
+            for ann in other.annotations
+        ]
+        self.detections += [
+            {**det, "image_id": det["image_id"] + image_offset} for det in other.detections
+        ]
+
+    # COCO's ten thresholds plus 0.25. Each threshold is matched independently,
+    # so adding one leaves the others' results unchanged.
+    IOU_THRESHOLDS = np.array([0.25, *np.linspace(0.5, 0.95, 10)])
+
     def compute(self) -> dict[str, float]:
         if not self.annotations:
-            return {"mAP50": math.nan, "mAP50_95": math.nan}
+            return {"mAP25": math.nan, "mAP50": math.nan, "mAP50_95": math.nan}
         if not self.detections:
-            return {"mAP50": 0.0, "mAP50_95": 0.0}
+            return {"mAP25": 0.0, "mAP50": 0.0, "mAP50_95": 0.0}
         with contextlib.redirect_stdout(io.StringIO()):  # pycocotools prints progress
             coco_gt = COCO()
             coco_gt.dataset = {
@@ -72,8 +90,23 @@ class COCOMaskAP:
             coco_gt.createIndex()
             evaluator = COCOeval(coco_gt, coco_gt.loadRes(self.detections), iouType="segm")
             evaluator.params.imgIds = [image["id"] for image in self.images]
+            evaluator.params.iouThrs = self.IOU_THRESHOLDS
             evaluator.evaluate()
             evaluator.accumulate()
-            evaluator.summarize()
-        # stats[0]: AP @ IoU 0.50:0.95, stats[1]: AP @ IoU 0.50 (area all, maxDets 100)
-        return {"mAP50": float(evaluator.stats[1]), "mAP50_95": float(evaluator.stats[0])}
+
+        # precision: (IoU thresholds, recall points, classes, area ranges, maxDets).
+        # Area range "all" and maxDets 100, as COCOeval.summarize's AP rows;
+        # entries of -1 (no ground truth for that class) are left out, as there.
+        precision = evaluator.eval["precision"][:, :, :, 0, -1]
+
+        def average(rows) -> float:
+            values = precision[rows]
+            values = values[values > -1]
+            return float(values.mean()) if values.size else -1.0
+
+        thresholds = self.IOU_THRESHOLDS
+        return {
+            "mAP25": average(np.isclose(thresholds, 0.25)),
+            "mAP50": average(np.isclose(thresholds, 0.5)),
+            "mAP50_95": average(thresholds >= 0.5 - 1e-9),
+        }

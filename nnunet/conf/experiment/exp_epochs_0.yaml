@@ -1,0 +1,12 @@
+# @package _global_
+# 20 epochs instead of nnU-Net's fixed 1000
+# Derived from exp_reference: only experiment.trainer differs.
+# An epoch is 250 iterations regardless of dataset size, so 20 epochs is 40,000
+# samples — roughly what the seg framework sees in its 100 epochs.
+experiment:
+  fold: ???
+  trainer: nnUNetTrainer_20epochs
+dataset:
+  id: 1
+  resolution: 512
+  split_mode: train_test

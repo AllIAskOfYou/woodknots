@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from mltools.common.coco_dataset import COCODataset
 from mltools.common.logger import make_bar_format
-from mltools.common.splits import get_split
+from mltools.common.splits import TRAIN_VAL_TEST, get_split
 from mltools.common.utils import symlink_relative
 
 CONF_MAP = {0.2: "low", 0.6: "medium", 1.0: "high"}
@@ -18,6 +18,17 @@ def get_framework_root(data_root: str) -> str:
 
 def get_dataset_dir(data_root: str, ds_name: str, ds_hash: str) -> str:
     return str(Path(get_framework_root(data_root)) / f"{ds_name}_{ds_hash}")
+
+
+# Dataset keys that cannot affect what the converted YOLO dataset contains:
+# folds only drives train.py's per-fold symlinking out of this shared directory,
+# and class_names is the benchmark's evaluation classes — YOLO's own classes come
+# from dataset.label (see get_class_names below). Excluded from the dataset hash
+# so adding or changing either does not invalidate an already-built, byte-
+# identical formatted dir. setup.py (collect_dataset_variants) and train.py
+# (get_dataset_dir) must pass the same list or they compute different hashes for
+# the same dataset.
+SETUP_IRRELEVANT_DATASET_KEYS = ["folds", "class_names"]
 
 
 def get_class_names(label_cfg: DictConfig) -> dict[int, str]:
@@ -145,8 +156,7 @@ def ensure_formatted(
     labels_dir.mkdir(parents=True, exist_ok=True)
 
     images_link = dataset_dir / "images"
-    if not images_link.exists():
-        symlink_relative(images_link, Path(local_dir) / "images", target_is_directory=True)
+    symlink_relative(images_link, Path(local_dir) / "images", target_is_directory=True)
 
     class_names = get_class_names(label_cfg)
     names_to_idx = {name: idx for idx, name in class_names.items()}
@@ -162,12 +172,23 @@ def ensure_formatted(
     return str(dataset_dir)
 
 
-def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str, class_names: dict[int, str]) -> str:
+def write_fold_split(
+    dataset_dir: str,
+    folds_path: str,
+    fold: int,
+    out_dir: str,
+    class_names: dict[int, str],
+    mode: str = TRAIN_VAL_TEST,
+) -> str:
     """Fold-dependent, cheap, uncached — populates out_dir/{train,val,test}/{images,labels}/
     with symlinks into the shared formatted dataset (no duplication of the
     underlying files), writes out_dir/{train,val,test}.txt, and out_dir/data.yaml.
     Splits come from mltools.common.splits.get_split: Ultralytics selects
     best.pt (and runs early stopping) on val; test is only predicted on.
+    Under mode="train_test" the selection partition joins training and val IS
+    the test partition — Ultralytics still needs a val loader, so its metrics
+    are logged for inspection while predictions come from last.pt instead of
+    best.pt (see mltools.yolo.train).
     Called by both train.py and evaluate.py, so each run gets its own
     fold-specific data.yaml without mutating the shared formatted dataset.
 
@@ -181,7 +202,7 @@ def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str,
     a truncated pickle. Distinct directories give each split its own cache
     path instead.
     """
-    split = get_split(folds_path, fold)
+    split = get_split(folds_path, fold, mode=mode)
 
     # Resolve to absolute so symlink_relative can compute the hop from each
     # link's own directory, whatever dataset_dir was passed as.
@@ -199,13 +220,12 @@ def write_fold_split(dataset_dir: str, folds_path: str, fold: int, out_dir: str,
         lines = []
         for case_id in split[split_name]:
             image_link = images_dir / f"{case_id}.png"
-            if not image_link.exists():
-                symlink_relative(image_link, src_images_dir / f"{case_id}.png")
+            symlink_relative(image_link, src_images_dir / f"{case_id}.png")
             lines.append(str(image_link))
 
             src_label = src_labels_dir / f"{case_id}.txt"
             label_link = labels_dir / f"{case_id}.txt"
-            if src_label.exists() and not label_link.exists():
+            if src_label.exists():
                 symlink_relative(label_link, src_label)
 
         (out_path / f"{split_name}.txt").write_text("\n".join(lines))

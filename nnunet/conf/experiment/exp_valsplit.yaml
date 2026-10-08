@@ -1,0 +1,9 @@
+# @package _global_
+# 4:1 split and the last checkpoint, matching seg and yolo (reference: 3:1:1 + best).
+# Needs its own dataset.id: nnU-Net reads the split from the formatted dataset.
+experiment:
+  fold: ???
+dataset:
+  id: 3
+  resolution: 512
+  split_mode: train_val_test

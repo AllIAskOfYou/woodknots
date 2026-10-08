@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=frida
 #SBATCH --exclude=ixb7
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:B300:1
 #SBATCH --constraint=GPU_GEN:BLACKWELL|GPU_GEN:BLACKWELL_ULTRA
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G

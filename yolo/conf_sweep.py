@@ -26,8 +26,14 @@ from ultralytics import YOLO
 from mltools.common.evaluate import evaluate_run
 from mltools.common.setup import compose_with_hydra_config
 from mltools.common.utils import hash_cfg
-from mltools.yolo.dataset import get_class_names, get_dataset_dir, write_fold_split
+from mltools.yolo.dataset import (
+    SETUP_IRRELEVANT_DATASET_KEYS,
+    get_class_names,
+    get_dataset_dir,
+    write_fold_split,
+)
 from mltools.yolo.train import (
+    _split_mode,
     _weights_path,
     get_imgsz,
     get_mode,
@@ -51,10 +57,19 @@ def sweep_fold(cfg, confs: list[float]) -> dict[float, dict]:
     if not weights_path.exists():
         raise FileNotFoundError(f"no trained weights at {weights_path}")
 
-    dataset_dir = get_dataset_dir(cfg.dataset.data_root, cfg.dataset.name, hash_cfg(cfg.dataset))
+    dataset_dir = get_dataset_dir(
+        cfg.dataset.data_root,
+        cfg.dataset.name,
+        hash_cfg(cfg.dataset, exclude_keys=SETUP_IRRELEVANT_DATASET_KEYS),
+    )
     class_names = get_class_names(cfg.dataset.label)
     write_fold_split(
-        dataset_dir, cfg.dataset.folds.file_path, cfg.experiment.fold, cfg.paths.run_dir, class_names
+        dataset_dir,
+        cfg.dataset.folds.file_path,
+        cfg.experiment.fold,
+        cfg.paths.run_dir,
+        class_names,
+        mode=_split_mode(cfg),
     )
     test_image_paths = [
         Path(line)
@@ -74,7 +89,6 @@ def sweep_fold(cfg, confs: list[float]) -> dict[float, dict]:
             imgsz=get_imgsz(cfg),
             mode=get_mode(cfg),
             conf=conf,
-            iou=cfg.train.iou,
         )
         results = evaluate_run(cfg, pred_dir)
         out[conf] = results["metrics"]

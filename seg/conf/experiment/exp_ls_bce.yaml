@@ -1,9 +1,7 @@
 # @package _global_
-# label smoothing on the BCE target only, Dice target left binary
-# (reference: 0.05 on both). Derived from exp_reference: only
-# loss.smooth_dice_target differs. Separates the two things smoothing does —
-# capping BCE confidence vs. filling the pooled Dice denominator with a
-# background floor that outweighs the knots.
+# label smoothing on the BCE target only, Dice target left binary (reference: both)
+# Derived from exp_reference: only loss.smooth_dice_target differs.
+# Separates capping BCE confidence from filling the pooled Dice denominator.
 experiment:
   fold: ???
 dataset:

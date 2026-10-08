@@ -6,6 +6,7 @@ from pathlib import Path
 
 from mltools.common.hf import ensure_dataset
 from mltools.common.setup import collect_dataset_variants, ensure_resized
+from mltools.common.splits import TRAIN_VAL_TEST
 from mltools.nnunet.dataset import ensure_formatted, get_framework_root
 from mltools.common.logger import get_logger, indented
 from mltools.nnunet.preprocess import preprocess_datasets
@@ -40,6 +41,7 @@ def prepare_datasets(dataset_variants: list[DictConfig]) -> None:
                 class_names=ds.class_names,
                 folds_path=ds.folds.file_path,
                 data_root=ds.data_root,
+                mode=ds.get("split_mode", TRAIN_VAL_TEST),
             )
             # store cfg into the formatted dir
             cfg_path = Path(formatted_dir) / "dataset_config.yaml"

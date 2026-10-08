@@ -4,3 +4,4 @@ experiment:
 dataset:
   id: 1
   resolution: 512
+  split_mode: train_test

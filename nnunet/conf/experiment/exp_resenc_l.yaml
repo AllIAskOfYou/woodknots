@@ -1,0 +1,11 @@
+# @package _global_
+# residual-encoder U-Net, ResEnc L preset (reference: PlainConvUNet)
+# Derived from exp_reference: only experiment.plans differs.
+# The authors' recommended default since 2024; same preprocessed data.
+experiment:
+  fold: ???
+  plans: nnUNetResEncUNetLPlans
+dataset:
+  id: 3
+  resolution: 512
+  split_mode: train_val_test

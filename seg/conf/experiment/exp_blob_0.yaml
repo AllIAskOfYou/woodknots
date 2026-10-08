@@ -1,18 +1,8 @@
 # @package _global_
-# per-instance Dice added to the loss — 1/sqrt(area) weighting, the recommended variant
+# per-instance Dice added to bce + pooled dice — 1/sqrt(area), the recommended variant
 # Derived from exp_reference: only train.loss.blob_* differ.
-#
-# Knot areas span 117x from the 5th to the 95th percentile, so the batch-pooled
-# Dice is dominated by the large knots. This shows up as pooled dice_fg_pooled
-# 0.610 against a per-image dice_fg of 0.505 on knot-containing images: big
-# knots are segmented well, small ones missed. The per-instance term weights
-# every ground-truth component by max(area, a_min)^-0.5 instead of by its pixel
-# count, and is ADDED to bce + pooled dice so empty images (31% of the data)
-# keep their only supervision against false positives.
-#
-# Pre-registered expectations: recall_fg_pooled up, precision_fg_pooled down,
-# gms up if the trade is favourable, and the per-case/pooled dice_fg gap down —
-# that gap is the direct test of the hypothesis.
+# Weights each GT component by max(area, a_min)^-0.5, so small knots are not
+# drowned out by the pooled Dice.
 experiment:
   fold: ???
 dataset:

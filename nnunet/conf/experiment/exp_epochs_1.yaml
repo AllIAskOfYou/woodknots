@@ -1,0 +1,10 @@
+# @package _global_
+# 100 epochs instead of nnU-Net's fixed 1000
+# Derived from exp_reference: only experiment.trainer differs.
+experiment:
+  fold: ???
+  trainer: nnUNetTrainer_100epochs
+dataset:
+  id: 1
+  resolution: 512
+  split_mode: train_test

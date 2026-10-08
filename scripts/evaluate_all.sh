@@ -112,7 +112,16 @@ FAILED=()
 
 for pair in "${TODO_PAIRS[@]}"; do
     read -r exp_name fold <<< "${pair}"
-    if ! ./scripts/evaluate.sh "${FRAMEWORK}" "${exp_name}" "${fold}" --env=${ENV}; then
+    # A seed run <config>_<i> (scripts/run_variance.py) has no config of its
+    # own: evaluate it as its base config under its own name.
+    config="${exp_name}"
+    extra=()
+    if [[ ! -f "${FRAMEWORK}/conf/experiment/${exp_name}.yaml" && "${exp_name}" =~ ^(.+)_[0-9]+$ \
+          && -f "${FRAMEWORK}/conf/experiment/${BASH_REMATCH[1]}.yaml" ]]; then
+        config="${BASH_REMATCH[1]}"
+        extra=(-- "experiment.name=${exp_name}")
+    fi
+    if ! ./scripts/evaluate.sh "${FRAMEWORK}" "${config}" "${fold}" --env=${ENV} "${extra[@]}"; then
         echo "FAILED: ${exp_name} fold=${fold}"
         FAILED+=("${exp_name} fold=${fold}")
     fi

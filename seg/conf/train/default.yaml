@@ -13,6 +13,16 @@ batch_size: 20
 #                       divided once; empty images contribute only their false
 #                       positives
 #   val_iou, val_gms    the other per-image metrics
+# How the shared k-fold partition file is used (mltools.common.splits):
+#   train_test (default): no model selection — train on the k-1 partitions that
+#     are not the test one, keep the final epoch, and log val metrics on the test
+#     partition for inspection only (never selected on).
+#   train_val_test: partition i is withheld and selects the checkpoint.
+# The test partition is the same in both, so they differ only in how much data
+# is trained on and in whether a checkpoint is selected. Lives here rather than
+# under dataset.folds because yolo hashes its whole dataset config into the
+# converted-dataset directory name, so a new key there invalidates those dirs.
+split_mode: train_test
 checkpoint_metric: val_dice_fg_pooled
 # First epoch that actually validates; using warmup, also matters for model
 # selection.
@@ -21,7 +31,7 @@ validate_from_epoch: 0
 # comparing checkpoint selection against just taking the end of training.
 # ModelCheckpoint's own last.ckpt does NOT hold them: it is written only on
 # epochs that also wrote the best checkpoint, so it is byte-identical to it.
-# Implied by dataset.folds.mode=train_test, which predicts from final.ckpt.
+# Implied by train.split_mode=train_test, which predicts from final.ckpt.
 save_final_checkpoint: false
 # Exponential moving average of the weights, updated once per epoch and written
 # as final.ckpt in place of the raw final weights. null disables it. decay d

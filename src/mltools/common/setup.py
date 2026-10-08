@@ -1,4 +1,5 @@
 import hashlib
+import re
 from hydra import compose, initialize_config_dir
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
@@ -12,6 +13,18 @@ from mltools.common.utils import hash_cfg
 def get_experiment_names(framework_dir: Path) -> list[str]:
     exp_dir = framework_dir / "conf" / "experiment"
     return sorted(f.stem for f in exp_dir.glob("*.yaml"))
+
+
+def experiment_overrides(exp_name: str, config_names: list[str]) -> list[str] | None:
+    """Hydra overrides that recreate a results dir's config: its own experiment
+    config, or for a seed run <config>_<i> (scripts/run_variance.py) the base
+    config under that name. None if neither exists."""
+    if exp_name in config_names:
+        return [f"experiment={exp_name}"]
+    match = re.fullmatch(r"(.+)_(\d+)", exp_name)
+    if match and match.group(1) in config_names:
+        return [f"experiment={match.group(1)}", f"experiment.name={exp_name}"]
+    return None
 
 
 def compose_with_hydra_config(overrides: list[str]):

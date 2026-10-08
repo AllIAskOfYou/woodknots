@@ -1,0 +1,13 @@
+# @package _global_
+# DINOv3 ConvNeXt-Base (~88M) instead of ConvNeXt-Large (~198M)
+# Derived from exp_reference: only the encoder size differs (same pretraining,
+# MAnet decoder, head and freezing).
+experiment:
+  fold: ???
+dataset:
+  resolution: 512
+
+train:
+  model:
+    _target_: mltools.seg.models.DINOv3BaseMAnet
+    num_classes: 1

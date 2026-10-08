@@ -4,24 +4,51 @@ mode: instance
 # deterministic kernel still run). Passed explicitly rather than inherited
 # from Ultralytics' defaults, as is the root-level seed it reads.
 deterministic: true
-# Prediction thresholds, pinned rather than inherited from Ultralytics'
-# defaults. conf gates whole detections before any mask exists (instance mode
-# only; semantic argmaxes every pixel), iou is the NMS overlap threshold.
+# Detection confidence gate, pinned rather than inherited from Ultralytics'
+# defaults. It gates whole detections before any mask exists (instance mode
+# only; semantic argmaxes every pixel). Ultralytics' iou is not set: YOLO26's
+# heads are end-to-end, so non_max_suppression filters by conf and max_det and
+# never uses an IoU threshold.
 conf: 0.25
-iou: 0.7
-epochs: 300
-patience: 50
-finetune_epochs: 20
-freeze: 11
+epochs: 100
+patience: 100
+# How the shared k-fold partition file is used (mltools.common.splits):
+#   train_test (default): no model selection — train on the k-1 partitions that
+#     are not the test one. Ultralytics still requires a val loader, so it is
+#     given the TEST partition and its per-epoch metrics are for inspection
+#     only; nothing selects on them, and patience must be >= epochs so early
+#     stopping cannot choose a stopping epoch from them either (train() raises
+#     otherwise).
+#   train_val_test: partition i is withheld, and Ultralytics' fitness (box plus
+#     mask mAP50-95) selects best.pt from it.
+# The test partition is the same in both, so they differ only in how much data
+# is trained on and in whether a checkpoint is selected. Best vs last measured
+# within noise across four configurations, while the extra partition is ~32%
+# more training data.
+split_mode: train_test
+# Which checkpoint predict() loads: last (the final epoch, no selection) or
+# best (Ultralytics' fitness-selected one). 'best' is rejected under
+# split_mode=train_test, where it would select on the test partition.
+weights: last
+# Deliberate deviations from Ultralytics' defaults (which train the whole
+# network): the backbone and the top-down neck are frozen, in the spirit of the
+# frozen encoder the seg framework uses. 17 measured better than 11 and much
+# better than 23 (only the Segment26 head trainable). exp_freeze_* ablate it.
+freeze: 17
+# Augmentation, at Ultralytics' own defaults. Experiments ablate from here
+# rather than from a null, so the reference is the stock configuration.
 augmentation:
-  hsv_h: 0.0
-  hsv_s: 0.0
-  hsv_v: 0.0
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
   flipud: 0.0
-  fliplr: 0.0
+  fliplr: 0.5
   degrees: 0.0
-  translate: 0.0
-  scale: 1.0
+  translate: 0.1
+  scale: 0.5          # gain, so the scale factor is drawn from [1-scale, 1+scale]
   mosaic: 1.0
+  # Epochs at the end of training with mosaic disabled. Whether the tail is
+  # reached at all depends on when patience stops the run.
+  close_mosaic: 10
   copy_paste: 0.0
   copy_paste_mode: "flip"

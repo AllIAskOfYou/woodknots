@@ -1,25 +1,8 @@
 # @package _global_
 # crops that actually crop: scale 0.6-1.0 instead of 1.0-1.5
 # Derived from exp_reference: only train.augmentation.random_crop.scale differs.
-#
-# RandomSizedCrop samples a square side in [resolution*scale[0],
-# resolution*scale[1]] and albumentations clips each side to the image, so the
-# reference range of 1.0-1.5 (512-768 px) never produces a square crop of a
-# 512-tall image: the height clips to 512 while the width does not, and the
-# result is resized to a square. The reference augmentation therefore applies
-# no zoom at all — only an aspect squash of up to 1.5x (or the image's aspect
-# ratio, whichever is smaller) plus a shift along the long axis. A square crop
-# happens only when the sampled side is exactly 512, about 1 in 257 samples.
-#
-# With 0.6-1.0 (307-512 px) nothing clips, so crops stay square: aspect ratio is
-# preserved and the crop is a genuine zoom of 1.0x to 1.67x.
-#
-# Note this changes both augmentation branches. In the mosaic branch the crop
-# acts on the 512x512 mosaic canvas, where the reference range made it an exact
-# no-op; here it becomes a real zoom into the mosaic. So the experiment swaps
-# aspect distortion for scale variation in the non-mosaic branch and adds scale
-# variation to the mosaic branch — two changes, not one, which is inherent to
-# the parameter rather than a choice.
+# The reference range only squashes the aspect ratio (sides clip to the image);
+# 0.6-1.0 keeps crops square and zooms 1.0-1.67x, in both augmentation branches.
 experiment:
   fold: ???
 dataset:

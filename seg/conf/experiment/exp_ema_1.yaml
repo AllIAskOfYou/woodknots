@@ -1,12 +1,7 @@
 # @package _global_
-# EMA of the weights over a ~20-epoch window
-# NOTE: this is now identical to exp_reference — ema_decay 0.95 became the
-# default after this run measured best. Kept so its results stay documented.
-#
-# Best-vs-final on exp_reference_final showed the final epoch losing ~0.024
-# dice_fg_pooled and ~0.025 gms to the selected checkpoint (0/5 folds better),
-# i.e. the late epochs drift. Averaging them should recover that without
-# giving up the training partition a held-out val split costs.
+# EMA over a ~50-epoch window (reference: 0.95, ~20 epochs)
+# Derived from exp_reference: only train.ema_decay differs.
+# Half the total budget, so the average still retains 13.5% of epoch 1.
 experiment:
   fold: ???
 dataset:

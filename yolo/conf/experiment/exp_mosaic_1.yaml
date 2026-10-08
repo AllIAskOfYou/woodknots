@@ -5,6 +5,6 @@ experiment:
   batch: 16
 dataset:
   resolution: 640
-
 train:
-  freeze: null
+  augmentation:
+    mosaic: 0.5

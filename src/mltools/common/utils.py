@@ -34,6 +34,13 @@ def symlink_relative(link: Path, target: Path, target_is_directory: bool = False
     the project root, so a relative path is valid in both."""
     link.parent.mkdir(parents=True, exist_ok=True)
     relative = os.path.relpath(Path(target).resolve(), link.parent.resolve())
+    # Replace whatever is there, rather than failing. A link left by an earlier
+    # run may point somewhere that no longer exists, and a dangling link is
+    # invisible to Path.exists() (which follows it) while still occupying the
+    # path, so symlink_to would raise FileExistsError. os.path.lexists sees the
+    # link itself.
+    if os.path.lexists(link):
+        link.unlink()
     link.symlink_to(relative, target_is_directory=target_is_directory)
 
 

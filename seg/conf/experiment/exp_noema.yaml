@@ -1,14 +1,6 @@
 # @package _global_
-# raw final-epoch weights, no averaging (reference: EMA over a ~20-epoch window)
+# raw final-epoch weights, no averaging (reference: EMA, ~20-epoch window)
 # Derived from exp_reference: only train.ema_decay differs.
-#
-# Isolates the weight averaging: same two-way split, same data, same 100 epochs,
-# the difference is only whether the saved final.ckpt holds the last epoch's
-# weights or an average of the trailing ones.
-#
-# This is the configuration already run as results/seg/exp_traintest, from
-# before EMA became the default — those results can be reused by renaming that
-# directory rather than training again.
 experiment:
   fold: ???
 dataset:

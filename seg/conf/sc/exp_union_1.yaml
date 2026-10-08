@@ -1,0 +1,31 @@
+# @package _global_
+# per-instance Dice added to bce + pooled dice — 1/area, the aggressive variant
+# Derived from exp_reference: only train.loss.blob_* differ.
+# Weights each GT component by max(area, a_min)^-1.0, undoing the area bias
+# entirely rather than halfway as exp_blob_0 does.
+experiment:
+  fold: ???
+dataset:
+  resolution: 1024
+
+train:
+  loss:
+    blob_weight: 1.0
+    blob_area_exponent: 1.0
+  freeze_encoder: false
+  optimizer:
+    encoder_lr: 1.0e-5   # 10x below the decoder lr, standard for fine-tuning
+    encoder_weight_decay: 0.05
+  augmentation:
+    distortion:
+      elastic:
+        alpha: 2.0
+      grid:
+        distort_limit: 0.5
+    coarse_dropout:
+      p: 0.0
+    color_jitter:
+      brightness: 0.8  # 0.5
+      contrast: 0.8    # 0.5
+      saturation: 0.6  # 0.3
+      hue: 0.2         # 0.1, albumentations caps hue at 0.5

@@ -7,5 +7,5 @@ dataset:
   resolution: 640
 train:
   augmentation:
-    scale: 0.8
-    translate: 0.1
+    translate: 0.0
+    scale: 0.0

@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 from pathlib import Path
 
 from mltools.common.instances import probs_to_instances, save_instances
-from mltools.common.splits import get_split
+from mltools.common.splits import SPLIT_MODES, TRAIN_TEST, TRAIN_VAL_TEST, get_split
 from mltools.common.utils import symlink_relative
 
 from mltools.common.logger import get_logger
@@ -15,6 +15,36 @@ from mltools.common.utils import (
 from .utils import build_nnunet_env
 
 logger = get_logger(__name__)
+
+CHECKPOINTS = {"best": "checkpoint_best.pth", "final": "checkpoint_final.pth"}
+
+
+def _split_mode(cfg: DictConfig) -> str:
+    """Set on dataset, not train: nnU-Net reads the split from the formatted
+    dataset, so it is a property of dataset.id and each mode needs its own."""
+    mode = cfg.dataset.get("split_mode", TRAIN_VAL_TEST)
+    if mode not in SPLIT_MODES:
+        raise ValueError(f"Unknown dataset.split_mode {mode!r}, expected one of {SPLIT_MODES}.")
+    return mode
+
+
+def _checkpoint(cfg: DictConfig) -> str:
+    """Which of nnU-Net's two checkpoints to predict from. best, the default, is
+    chosen by the EMA of the val pseudo-dice; under train_test that partition is
+    the test set, so only final is allowed there."""
+    mode = _split_mode(cfg)
+    choice = cfg.experiment.get("checkpoint", "best" if mode == TRAIN_VAL_TEST else "final")
+    if choice not in CHECKPOINTS:
+        raise ValueError(
+            f"Unknown experiment.checkpoint {choice!r}, expected one of {sorted(CHECKPOINTS)}."
+        )
+    if choice == "best" and mode == TRAIN_TEST:
+        raise ValueError(
+            "experiment.checkpoint=best is not allowed with dataset.split_mode=train_test: "
+            "checkpoint_best.pth is selected on the val partition, which in that mode is the "
+            "test partition. Use checkpoint=final, or split_mode=train_val_test."
+        )
+    return CHECKPOINTS[choice]
 
 
 def _fold_dir(cfg: DictConfig) -> Path:
@@ -35,6 +65,8 @@ def train(cfg: DictConfig) -> None:
     plans = cfg.experiment.get("plans", "nnUNetPlans")
 
     dataset_name = f"Dataset{dataset_id:03d}_{cfg.dataset.name}"
+
+    _checkpoint(cfg)  # reject an invalid split_mode/checkpoint pair before training, not after
 
     marker = train_complete_marker(cfg.paths.run_dir)
     if marker.exists():
@@ -72,10 +104,9 @@ def train(cfg: DictConfig) -> None:
 
 
 def predict(cfg: DictConfig) -> None:
-    """Predict the split's held-out test partition with checkpoint_best.pth —
-    the checkpoint nnU-Net selected on the val partition, matching seg's best
-    checkpoint and YOLO's best.pt. nnU-Net's own end-of-training validation/
-    export covers val, not test, so it isn't used for scoring.
+    """Predict the split's held-out test partition with the checkpoint
+    _checkpoint() selects. nnU-Net's own end-of-training validation/ export
+    covers val, not test, so it isn't used for scoring.
     nnUNetv2_predict's defaults (step 0.5, Gaussian weighting, mirroring) are
     the same predictor settings that export uses.
 
@@ -93,11 +124,11 @@ def predict(cfg: DictConfig) -> None:
         logger.info(f"{tag} Test predictions already generated (found {pred_marker}), skipping.")
         return
 
-    test_cases = get_split(cfg.dataset.folds.file_path, fold)["test"]
+    test_cases = get_split(cfg.dataset.folds.file_path, fold, mode=_split_mode(cfg))["test"]
     raw_dir = Path(cfg.paths.run_dir) / "nnunet_predictions"
     pred_dir = Path(cfg.paths.run_dir) / "predictions"
 
-    checkpoint_path = _fold_dir(cfg) / "checkpoint_best.pth"
+    checkpoint_path = _fold_dir(cfg) / _checkpoint(cfg)
     if not train_complete_marker(cfg.paths.run_dir).exists() or not checkpoint_path.exists():
         raise RuntimeError(
             f"Cannot generate predictions: training has not completed "

@@ -61,8 +61,13 @@ def evaluate_segmentation(
       (dataset-level, so in "metrics" only). instance_f1 in "per_case" is the
       same matching scored per image, where a case with no ground truth and no
       prediction scores 1.0 — kept as a diagnostic;
-    - mAP50, mAP50_95: COCO mask AP over all cases at once (dataset-level, so
+    - mAP25, mAP50, mAP50_95: COCO mask AP over all cases at once (dataset-level, so
       in "metrics" only, not "per_case"), at each method's operating point;
+    - dice_nefg: dice_fg averaged over the cases whose ground truth contains
+      foreground only, so knot-free cases contribute neither free 1.0s nor 0s;
+    - ele (empty-left-empty): the fraction of knot-free cases the model also
+      left empty — image-level specificity, the complement of what dice_nefg
+      leaves out;
     - dice_fg_pooled, iou_fg_pooled, precision_fg_pooled, recall_fg_pooled:
       foreground-only pixel counts pooled over all cases before dividing (the
       definition the losses optimise) — also dataset-level, so likewise not in
@@ -84,6 +89,75 @@ def evaluate_segmentation(
     return score_instances(predictions, gt_instances, len(class_names), metrics=metrics)
 
 
+def case_contribution(pred, gt, num_classes: int, metrics: dict[str, Metric] = STANDARD_METRICS) -> dict:
+    """Everything one case adds to an evaluation: its per-case scores and its
+    share of every dataset-level accumulator. combine_contributions() turns a
+    set of these into the evaluation's result; computing them separately lets
+    a caller reuse a case's contribution when that case's prediction does not
+    change (a threshold sweep, say)."""
+    if pred.shape != gt.shape:
+        raise RuntimeError(f"prediction shape {pred.shape} != ground truth {gt.shape}")
+    if pred.num_instances and not (1 <= pred.labels.min() and pred.labels.max() <= num_classes):
+        raise RuntimeError(f"instance labels outside the benchmark classes 1..{num_classes}")
+
+    pred_label_map = instances_to_label_map(pred)
+    gt_label_map = instances_to_label_map(gt)
+    pred_logits = _to_pseudo_logits(pred_label_map, num_classes)
+    gt_onehot = _to_pseudo_logits(gt_label_map, num_classes) > 0
+    scores = {name: metric.compute(pred_logits, gt_onehot.float()) for name, metric in metrics.items()}
+    # Per case, so a knot-free case with no prediction scores 1.0 —
+    # a diagnostic, not a headline: instance_*_pooled is the same matching
+    # with the counts pooled over the evaluation instead.
+    scores["instance_f1"] = instance_gms(pred, gt, num_classes)
+
+    average_precision = COCOMaskAP(num_classes)
+    average_precision.add(pred, gt)
+    pooled = PooledOverlap(num_classes)
+    pooled.add(pred_label_map, gt_label_map)
+    pooled_instances = PooledInstanceF1(num_classes)
+    pooled_instances.add(pred, gt)
+    return {
+        "scores": scores,
+        "average_precision": average_precision,
+        "pooled": pooled,
+        "pooled_instances": pooled_instances,
+        "gt_empty": not gt_label_map.any(),
+        "pred_empty": not pred_label_map.any(),
+    }
+
+
+def combine_contributions(contributions: dict, num_classes: int, metrics: dict[str, Metric] = STANDARD_METRICS) -> dict:
+    """{case_id: case_contribution(...)} -> {"metrics", "per_case"}, exactly
+    what score_instances returns for the same cases in the same order."""
+    per_case = {case_id: dict(c["scores"]) for case_id, c in contributions.items()}
+    average_precision = COCOMaskAP(num_classes)
+    pooled = PooledOverlap(num_classes)
+    pooled_instances = PooledInstanceF1(num_classes)
+    non_empty_dice: list[float] = []
+    empty_cases = empty_left_empty = 0
+    for c in contributions.values():
+        average_precision.merge(c["average_precision"])
+        pooled.merge(c["pooled"])
+        pooled_instances.merge(c["pooled_instances"])
+        if not c["gt_empty"]:
+            if "dice_fg" in c["scores"]:
+                non_empty_dice.append(c["scores"]["dice_fg"])
+        else:
+            empty_cases += 1
+            empty_left_empty += c["pred_empty"]
+
+    names = list(next(iter(per_case.values()))) if per_case else [*metrics, "instance_f1"]
+    mean_metrics = {name: sum(scores[name] for scores in per_case.values()) / len(per_case) for name in names}
+    mean_metrics |= average_precision.compute()
+    mean_metrics |= pooled.compute()
+    mean_metrics |= pooled_instances.compute()
+    mean_metrics["dice_nefg"] = (
+        sum(non_empty_dice) / len(non_empty_dice) if non_empty_dice else float("nan")
+    )
+    mean_metrics["ele"] = empty_left_empty / empty_cases if empty_cases else float("nan")
+    return {"metrics": mean_metrics, "per_case": per_case}
+
+
 def score_instances(
     predictions: dict,
     gt_instances: dict,
@@ -94,37 +168,13 @@ def score_instances(
     memory: {case_id: Instances} for both sides. Split out so callers that vary
     the predictions without rewriting them to disk — a confidence sweep, say —
     score through exactly the same code path as a normal evaluation."""
-    per_case: dict[str, dict[str, float]] = {}
-    average_precision = COCOMaskAP(num_classes)
-    pooled = PooledOverlap(num_classes)
-    pooled_instances = PooledInstanceF1(num_classes)
+    contributions = {}
     for case_id, pred in predictions.items():
-        gt = gt_instances[case_id]
-        if pred.shape != gt.shape:
-            raise RuntimeError(f"{case_id}: prediction shape {pred.shape} != ground truth {gt.shape}")
-        if pred.num_instances and not (1 <= pred.labels.min() and pred.labels.max() <= num_classes):
-            raise RuntimeError(f"{case_id}: instance labels outside the benchmark classes 1..{num_classes}")
-
-        pred_label_map = instances_to_label_map(pred)
-        gt_label_map = instances_to_label_map(gt)
-        pred_logits = _to_pseudo_logits(pred_label_map, num_classes)
-        gt_onehot = _to_pseudo_logits(gt_label_map, num_classes) > 0
-        scores = {name: metric.compute(pred_logits, gt_onehot.float()) for name, metric in metrics.items()}
-        # Per case, so a knot-free case with no prediction scores 1.0 —
-        # a diagnostic, not a headline: instance_*_pooled below is the same
-        # matching with the counts pooled over the evaluation instead.
-        scores["instance_f1"] = instance_gms(pred, gt, num_classes)
-        per_case[case_id] = scores
-        average_precision.add(pred, gt)
-        pooled.add(pred_label_map, gt_label_map)
-        pooled_instances.add(pred, gt)
-
-    names = list(next(iter(per_case.values()))) if per_case else [*metrics, "instance_f1"]
-    mean_metrics = {name: sum(scores[name] for scores in per_case.values()) / len(per_case) for name in names}
-    mean_metrics |= average_precision.compute()
-    mean_metrics |= pooled.compute()
-    mean_metrics |= pooled_instances.compute()
-    return {"metrics": mean_metrics, "per_case": per_case}
+        try:
+            contributions[case_id] = case_contribution(pred, gt_instances[case_id], num_classes, metrics)
+        except RuntimeError as error:
+            raise RuntimeError(f"{case_id}: {error}") from None
+    return combine_contributions(contributions, num_classes, metrics)
 
 
 def evaluate_run(cfg, pred_dir) -> dict:

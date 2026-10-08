@@ -7,7 +7,7 @@ dataset:
   resolution: 640
 train:
   augmentation:
-    hsv_h: 0.01
-    hsv_s: 0.6
-    hsv_v: 0.4
+    hsv_h: 0.0
+    hsv_s: 0.0
+    hsv_v: 0.0
     

@@ -174,6 +174,13 @@ class PooledInstanceF1:
             self.false_positive[index] += fp
             self.false_negative[index] += fn
 
+    def merge(self, other: "PooledInstanceF1") -> None:
+        """Add another accumulator's counts, as if its cases had been added here."""
+        for index in range(self.num_classes):
+            self.true_positive[index] += other.true_positive[index]
+            self.false_positive[index] += other.false_positive[index]
+            self.false_negative[index] += other.false_negative[index]
+
     def compute(self) -> dict[str, float]:
         scores: dict[str, list[float]] = {"f1": [], "precision": [], "recall": []}
         for index in range(self.num_classes):

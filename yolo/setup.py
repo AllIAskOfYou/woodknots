@@ -6,7 +6,7 @@ from pathlib import Path
 
 from mltools.common.hf import ensure_dataset
 from mltools.common.setup import collect_dataset_variants, ensure_resized
-from mltools.yolo.dataset import ensure_formatted
+from mltools.yolo.dataset import SETUP_IRRELEVANT_DATASET_KEYS, ensure_formatted
 from mltools.common.logger import get_logger, indented
 
 logger = get_logger(__name__)
@@ -56,7 +56,11 @@ def prepare_datasets(dataset_variants: list[DictConfig]) -> None:
 def main():
     framework_dir = Path(__file__).parent
     logger.info(f"Collecting dataset variants from framework dir: {framework_dir}")
-    dataset_variants = collect_dataset_variants(framework_dir)
+    # Must match the exclusions train.py passes to hash_cfg, or setup builds
+    # a directory training will not look for.
+    dataset_variants = collect_dataset_variants(
+        framework_dir, exclude_keys=SETUP_IRRELEVANT_DATASET_KEYS
+    )
     prepare_datasets(dataset_variants)
 
 

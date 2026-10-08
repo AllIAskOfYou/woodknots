@@ -1,0 +1,14 @@
+# @package _global_
+# 3:1:1 split with checkpoint selection (reference: 4:1, final epoch)
+# Derived from exp_reference: only train.split_mode and train.weights differ.
+# Trains on ~24% less data (363 vs 479 cases for fold 0) in exchange for letting
+# fitness pick best.pt; same test partition as every other run.
+experiment:
+  fold: ???
+  model_path: yolo26m-seg.pt
+  batch: 16
+dataset:
+  resolution: 640
+train:
+  split_mode: train_val_test
+  weights: best

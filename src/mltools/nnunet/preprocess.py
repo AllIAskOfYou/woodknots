@@ -8,6 +8,10 @@ from mltools.nnunet.utils import build_nnunet_env
 
 logger = get_logger(__name__)
 
+# Extra plans (plans identifier -> planner) planned for every dataset. Their 2d
+# configuration reuses the default nnUNetPlans_2d data, so this is planning only.
+EXTRA_PLANNERS = {"nnUNetResEncUNetLPlans": "nnUNetPlannerResEncL"}
+
 
 def preprocess_dataset(cfg: DictConfig) -> None:
     ds_cfg = cfg
@@ -40,6 +44,16 @@ def preprocess_dataset(cfg: DictConfig) -> None:
         preprocessed_marker.touch()
     else:
         logger.info(f"Dataset {dataset_id} already preprocessed, skipping.")
+
+    for plans_name, planner in EXTRA_PLANNERS.items():
+        if (nnunet_preprocessed_root / dataset_name / f"{plans_name}.json").exists():
+            logger.info(f"Dataset {dataset_id} already has {plans_name}, skipping.")
+            continue
+        run_command(
+            ["nnUNetv2_plan_experiment", "-d", f"{dataset_id:03d}", "-pl", planner],
+            env=env,
+            logger=logger,
+        )
 
 
 
