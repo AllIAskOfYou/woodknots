@@ -108,18 +108,18 @@ def _bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
     return rows[0], rows[-1] + 1, cols[0], cols[-1] + 1
 
 
-def _match_instances(pred_masks, pred_scores, gt_masks, iou_threshold=0.5):
+def match_instance_pairs(pred_masks, pred_scores, gt_masks, iou_threshold=0.5) -> list[tuple[int, int]]:
     """Greedy matching of given instance masks — the rule of
     _compute_instance_gms, applied to instances instead of connected
     components: predictions in descending score order each take the unmatched
     target with the highest IoU, a match if it reaches iou_threshold.
-    Instances may overlap. -> (tp, fp, fn)"""
+    Instances may overlap. -> [(prediction index, target index)], one per match."""
     if len(pred_masks) == 0:
-        return 0, 0, len(gt_masks)
+        return []
     gt_boxes = [_bbox(m) for m in gt_masks]
     gt_areas = [int(m.sum()) for m in gt_masks]
-    matched = set()
-    tp = 0
+    matched: set[int] = set()
+    pairs = []
     for p in np.argsort(-np.asarray(pred_scores), kind="stable"):
         p_mask = pred_masks[p]
         py0, py1, px0, px1 = _bbox(p_mask)
@@ -134,8 +134,14 @@ def _match_instances(pred_masks, pred_scores, gt_masks, iou_threshold=0.5):
             if iou > best_iou:
                 best_iou, best_t = iou, t
         if best_iou >= iou_threshold:
-            tp += 1
             matched.add(best_t)
+            pairs.append((int(p), best_t))
+    return pairs
+
+
+def _match_instances(pred_masks, pred_scores, gt_masks, iou_threshold=0.5):
+    """match_instance_pairs as counts. -> (tp, fp, fn)"""
+    tp = len(match_instance_pairs(pred_masks, pred_scores, gt_masks, iou_threshold))
     return tp, len(pred_masks) - tp, len(gt_masks) - tp
 
 
